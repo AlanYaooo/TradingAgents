@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from .alpha_vantage_common import _filter_csv_by_date_range, _make_api_request
+from .errors import NoMarketDataError
 
 
 def get_stock(
@@ -37,4 +38,14 @@ def get_stock(
 
     response = _make_api_request("TIME_SERIES_DAILY_ADJUSTED", params)
 
-    return _filter_csv_by_date_range(response, start_date, end_date)
+    result = _filter_csv_by_date_range(response, start_date, end_date)
+    # An empty or header-only result means Alpha Vantage has no coverage for this
+    # symbol (e.g. a non-US ticker). Raise a typed no-data error so the router
+    # falls through to the next configured vendor instead of returning an empty
+    # table that the agent would treat as valid (the "fallback illusion").
+    rows = [ln for ln in (result or "").strip().splitlines() if ln.strip()]
+    if len(rows) <= 1:
+        raise NoMarketDataError(
+            symbol, symbol, f"Alpha Vantage returned no rows for {start_date}..{end_date}"
+        )
+    return result

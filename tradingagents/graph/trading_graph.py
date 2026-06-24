@@ -278,15 +278,33 @@ class TradingAgentsGraph:
             if len(stock) < 2 or len(bench) < 2:
                 return None, None, None
 
-            actual_days = min(holding_days, len(stock) - 1, len(bench) - 1)
-            raw = float(
-                (stock["Close"].iloc[actual_days] - stock["Close"].iloc[0])
-                / stock["Close"].iloc[0]
-            )
-            bench_ret = float(
-                (bench["Close"].iloc[actual_days] - bench["Close"].iloc[0])
-                / bench["Close"].iloc[0]
-            )
+            # Align stock and benchmark on the SAME trading days before measuring
+            # the holding-period return. Indexing each by position (iloc) would
+            # silently compare different calendar dates whenever the two have a
+            # different trading calendar (A-share vs SPY, a holiday, a halt),
+            # producing a wrong alpha. Join by date instead.
+            import pandas as pd
+
+            def _close_by_date(h):
+                c = h["Close"].dropna()
+                idx = c.index
+                if getattr(idx, "tz", None) is not None:
+                    idx = idx.tz_localize(None)
+                c.index = pd.DatetimeIndex(idx).normalize()
+                return c[~c.index.duplicated(keep="last")]
+
+            joined = pd.concat(
+                [_close_by_date(stock).rename("s"), _close_by_date(bench).rename("b")],
+                axis=1, join="inner",
+            ).dropna()
+            if len(joined) < 2:
+                return None, None, None
+
+            actual_days = min(holding_days, len(joined) - 1)
+            s0, s1 = joined["s"].iloc[0], joined["s"].iloc[actual_days]
+            b0, b1 = joined["b"].iloc[0], joined["b"].iloc[actual_days]
+            raw = float((s1 - s0) / s0)
+            bench_ret = float((b1 - b0) / b0)
             alpha = raw - bench_ret
             return raw, alpha, actual_days
         except Exception as e:
@@ -359,6 +377,16 @@ class TradingAgentsGraph:
         successful node on a subsequent invocation with the same ticker+date.
         """
         self.ticker = company_name
+
+        # Record run-level context so symbol-less tools (prediction markets,
+        # global news, macro) can resolve the market and the look-ahead cutoff.
+        from tradingagents.dataflows.cn_market import (
+            is_ashare,
+            set_active_market,
+            set_analysis_date,
+        )
+        set_analysis_date(trade_date)
+        set_active_market("cn" if is_ashare(company_name) else None)
 
         # Resolve any pending memory-log entries for this ticker before the pipeline runs.
         self._resolve_pending_entries(company_name)

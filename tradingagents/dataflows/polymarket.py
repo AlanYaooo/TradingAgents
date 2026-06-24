@@ -65,7 +65,9 @@ def _is_forward_looking(market: dict, now: datetime) -> bool:
     )
 
 
-def get_prediction_markets(topic: str, limit: int | None = None) -> str:
+def get_prediction_markets(
+    topic: str, limit: int | None = None, curr_date: str | None = None
+) -> str:
     """Return live prediction-market probabilities for an event topic.
 
     Args:
@@ -73,6 +75,9 @@ def get_prediction_markets(topic: str, limit: int | None = None) -> str:
             "US election", or a sector/company event.
         limit: Max markets to return (ranked by traded volume); ``None`` uses
             DEFAULT_LIMIT.
+        curr_date: The analysis date (YYYY-mm-dd). Markets resolving on/before it
+            are excluded as already-settled, and for a historical backtest the
+            (live-only) feed is suppressed entirely to avoid look-ahead.
 
     Returns:
         A markdown report of the most-traded open markets matching the topic,
@@ -81,6 +86,25 @@ def get_prediction_markets(topic: str, limit: int | None = None) -> str:
     """
     if limit is None:
         limit = DEFAULT_LIMIT
+
+    real_now = datetime.now(timezone.utc)
+    ref = real_now
+    if curr_date:
+        try:
+            ref = datetime.strptime(str(curr_date)[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            ref = real_now
+        # Gamma exposes only LIVE prices. If the analysis date is materially in
+        # the past, those prices embed information after it, so we cannot provide
+        # a look-ahead-safe signal for a historical backtest.
+        if (real_now - ref).days > 2:
+            return (
+                f'## Polymarket prediction markets: "{topic}"\n'
+                f"Prediction-market signal omitted: Polymarket only exposes live "
+                f"prices, which would leak information after the analysis date "
+                f"{str(curr_date)[:10]} (look-ahead). Not available for historical "
+                f"backtests; proceed without it."
+            )
 
     try:
         data = _request("public-search", {"q": topic, "limit_per_type": 20})
@@ -91,12 +115,11 @@ def get_prediction_markets(topic: str, limit: int | None = None) -> str:
             f"Proceed without prediction-market signal for '{topic}'."
         )
 
-    now = datetime.now(timezone.utc)
     candidates = [
         m
         for event in data.get("events", [])
         for m in event.get("markets", [])
-        if _is_forward_looking(m, now)
+        if _is_forward_looking(m, ref)
     ]
     candidates.sort(key=lambda m: m.get("volumeNum") or 0, reverse=True)
 

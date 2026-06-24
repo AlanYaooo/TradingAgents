@@ -135,6 +135,21 @@ def get_active_market() -> str | None:
     return _ACTIVE_MARKET
 
 
+# Run-level analysis date (YYYY-mm-dd). Symbol-less, date-less tool calls
+# (prediction markets especially) read this to filter out events after the
+# analysis date — look-ahead safety for backtests.
+_ANALYSIS_DATE: str | None = None
+
+
+def set_analysis_date(date_str: str | None) -> None:
+    global _ANALYSIS_DATE
+    _ANALYSIS_DATE = date_str
+
+
+def get_analysis_date() -> str | None:
+    return _ANALYSIS_DATE
+
+
 def to_ak_symbol(symbol: str) -> str:
     """Bare 6-digit code akshare's stock_zh_a_hist / news / comment expect."""
     parsed = parse_cn(symbol)

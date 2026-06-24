@@ -2,6 +2,7 @@ from typing import Annotated
 
 from langchain_core.tools import tool
 
+from tradingagents.dataflows.cn_market import get_analysis_date
 from tradingagents.dataflows.interface import route_to_vendor
 
 
@@ -28,4 +29,6 @@ def get_prediction_markets(
     Returns:
         str: A formatted markdown report of matching prediction markets
     """
-    return route_to_vendor("get_prediction_markets", topic, limit)
+    # Pass the run's analysis date so the vendor can exclude events that
+    # resolved after it (look-ahead safety for backtests).
+    return route_to_vendor("get_prediction_markets", topic, limit, get_analysis_date())

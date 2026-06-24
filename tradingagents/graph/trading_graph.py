@@ -156,6 +156,36 @@ class TradingAgentsGraph:
         if temperature is not None and temperature != "":
             kwargs["temperature"] = float(temperature)
 
+        # --- Transport / generation knobs (config value, or TRADINGAGENTS_* env
+        # as a fallback). These were previously unreachable: the clients
+        # whitelisted them but nothing ever populated them, so users had to
+        # monkeypatch the chat class. Now they are first-class config.
+        def _cfg_or_env(key, env):
+            v = self.config.get(key)
+            if v is None or v == "":
+                v = os.environ.get(env)
+            return v
+
+        streaming = _cfg_or_env("streaming", "TRADINGAGENTS_STREAMING")
+        if streaming is not None and str(streaming) != "":
+            kwargs["streaming"] = str(streaming).strip().lower() in ("1", "true", "yes", "on")
+
+        max_tokens = _cfg_or_env("max_tokens", "TRADINGAGENTS_MAX_TOKENS")
+        if max_tokens:
+            kwargs["max_tokens"] = int(max_tokens)
+        elif provider == "anthropic":
+            # Anthropic + an unknown model name (relay's gpt-5.5) silently caps
+            # output at 4096, truncating long reports. Inject a safe default.
+            kwargs["max_tokens"] = 16384
+
+        timeout = _cfg_or_env("request_timeout", "TRADINGAGENTS_REQUEST_TIMEOUT")
+        if timeout:
+            kwargs["timeout"] = float(timeout)
+
+        max_retries = _cfg_or_env("max_retries", "TRADINGAGENTS_MAX_RETRIES")
+        if max_retries is not None and str(max_retries) != "":
+            kwargs["max_retries"] = int(max_retries)
+
         return kwargs
 
     def _create_tool_nodes(self) -> dict[str, ToolNode]:

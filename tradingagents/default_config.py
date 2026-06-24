@@ -95,6 +95,21 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # variation on models that honor it; reasoning models largely ignore it
     # and no setting makes LLM output bit-identical across runs (see README).
     "temperature": None,
+    # --- Transport / generation knobs (forwarded to the LLM client) ---
+    # streaming: force SSE streaming. Needed for relays/proxies that drop long
+    # non-streaming requests ("Server disconnected without sending a response").
+    # None = provider default. Env: TRADINGAGENTS_STREAMING=true.
+    "streaming": None,
+    # max_tokens: max output tokens per call. None = provider default. NOTE:
+    # Anthropic with an unknown model name (e.g. a relay serving gpt-5.5)
+    # silently falls back to 4096, truncating long reports — so for the
+    # anthropic provider an unset value defaults to 16384 (see trading_graph).
+    # Env: TRADINGAGENTS_MAX_TOKENS.
+    "max_tokens": None,
+    # Per-request timeout (seconds) and retry count for transient relay drops.
+    # None = client defaults. Env: TRADINGAGENTS_REQUEST_TIMEOUT / *_MAX_RETRIES.
+    "request_timeout": None,
+    "max_retries": None,
     # Checkpoint/resume: when True, LangGraph saves state after each node
     # so a crashed run can resume from the last successful step.
     "checkpoint_enabled": False,

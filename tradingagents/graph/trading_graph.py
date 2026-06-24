@@ -154,7 +154,13 @@ class TradingAgentsGraph:
         # string ("0.2") works the same as a programmatic float.
         temperature = self.config.get("temperature")
         if temperature is not None and temperature != "":
-            kwargs["temperature"] = float(temperature)
+            try:
+                kwargs["temperature"] = float(temperature)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"Invalid temperature {temperature!r} (config key 'temperature' / "
+                    f"TRADINGAGENTS_TEMPERATURE) — expected a number like 0.2."
+                ) from None
 
         # --- Transport / generation knobs (config value, or TRADINGAGENTS_* env
         # as a fallback). These were previously unreachable: the clients

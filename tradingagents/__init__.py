@@ -9,10 +9,22 @@ import warnings
 # load_dotenv defaults to override=False, so it never clobbers values
 # the caller has already exported.
 try:
+    from pathlib import Path
+
     from dotenv import find_dotenv, load_dotenv
 
     load_dotenv(find_dotenv(usecwd=True))
     load_dotenv(find_dotenv(".env.enterprise", usecwd=True), override=False)
+    # Fallbacks so API keys aren't silently lost when the process runs from
+    # outside the repo tree (find_dotenv(usecwd=True) only walks up from CWD):
+    # the package's repo root and ~/.tradingagents/.env. override=False keeps
+    # any value already loaded above (or exported) winning.
+    for _extra in (
+        Path(__file__).resolve().parent.parent / ".env",
+        Path.home() / ".tradingagents" / ".env",
+    ):
+        if _extra.is_file():
+            load_dotenv(_extra, override=False)
 except ImportError:
     pass
 

@@ -129,6 +129,15 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
     subsequent calls the cache is reused. Rows after curr_date are
     filtered out so backtests never see future prices.
     """
+    # China A-shares are served by akshare (authoritative, timely CN data);
+    # Yahoo's A-share coverage is delayed/thin. Routing here makes the technical
+    # indicator path and the verified market snapshot — both load_ohlcv-driven —
+    # work for A-shares with holiday-aware staleness.
+    from .cn_market import is_ashare
+    if is_ashare(symbol):
+        from .akshare_vendor import load_ohlcv_ak
+        return load_ohlcv_ak(symbol, curr_date)
+
     # Resolve broker/forex symbols (XAUUSD+ -> GC=F) to Yahoo's convention,
     # then reject values that would escape the cache directory when
     # interpolated into the cache filename (e.g. ``../../tmp/x``).

@@ -29,6 +29,17 @@ from .y_finance import (
     get_YFin_data_online,
 )
 from .yfinance_news import get_global_news_yfinance, get_news_yfinance
+from .akshare_vendor import (
+    get_balance_sheet as get_akshare_balance_sheet,
+    get_cashflow as get_akshare_cashflow,
+    get_fundamentals as get_akshare_fundamentals,
+    get_global_news as get_akshare_global_news,
+    get_income_statement as get_akshare_income_statement,
+    get_macro_indicators as get_akshare_macro,
+    get_news as get_akshare_news,
+    get_stock_data as get_akshare_stock,
+)
+from .cn_market import get_active_market, is_ashare, set_active_market
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +93,7 @@ VENDOR_LIST = [
     "fred",
     "polymarket",
     "alpha_vantage",
+    "akshare",  # China A-share: prices, fundamentals, statements, news, macro
 ]
 
 # Optional enrichment categories. These add macro/event context to the news
@@ -91,41 +103,58 @@ VENDOR_LIST = [
 # categories (prices, fundamentals, news) still raise so a broken primary is loud.
 OPTIONAL_CATEGORIES = {"macro_data", "prediction_markets"}
 
+# Methods whose first positional arg is the ticker/symbol — used by the
+# market-aware router to detect China A-shares per call.
+_SYMBOL_METHODS = {
+    "get_stock_data", "get_indicators", "get_fundamentals",
+    "get_balance_sheet", "get_cashflow", "get_income_statement",
+    "get_news", "get_insider_transactions",
+}
+
 # Mapping of methods to their vendor-specific implementations
 VENDOR_METHODS = {
     # core_stock_apis
     "get_stock_data": {
+        "akshare": get_akshare_stock,
         "alpha_vantage": get_alpha_vantage_stock,
         "yfinance": get_YFin_data_online,
     },
-    # technical_indicators
+    # technical_indicators (akshare reuses the load_ohlcv-driven impl, which is
+    # market-aware, so indicators are computed from akshare OHLCV for A-shares)
     "get_indicators": {
+        "akshare": get_stock_stats_indicators_window,
         "alpha_vantage": get_alpha_vantage_indicator,
         "yfinance": get_stock_stats_indicators_window,
     },
     # fundamental_data
     "get_fundamentals": {
+        "akshare": get_akshare_fundamentals,
         "alpha_vantage": get_alpha_vantage_fundamentals,
         "yfinance": get_yfinance_fundamentals,
     },
     "get_balance_sheet": {
+        "akshare": get_akshare_balance_sheet,
         "alpha_vantage": get_alpha_vantage_balance_sheet,
         "yfinance": get_yfinance_balance_sheet,
     },
     "get_cashflow": {
+        "akshare": get_akshare_cashflow,
         "alpha_vantage": get_alpha_vantage_cashflow,
         "yfinance": get_yfinance_cashflow,
     },
     "get_income_statement": {
+        "akshare": get_akshare_income_statement,
         "alpha_vantage": get_alpha_vantage_income_statement,
         "yfinance": get_yfinance_income_statement,
     },
     # news_data
     "get_news": {
+        "akshare": get_akshare_news,
         "alpha_vantage": get_alpha_vantage_news,
         "yfinance": get_news_yfinance,
     },
     "get_global_news": {
+        "akshare": get_akshare_global_news,
         "yfinance": get_global_news_yfinance,
         "alpha_vantage": get_alpha_vantage_global_news,
     },
@@ -135,6 +164,7 @@ VENDOR_METHODS = {
     },
     # macro_data
     "get_macro_indicators": {
+        "akshare": get_akshare_macro,
         "fred": get_fred_macro_data,
     },
     # prediction_markets
@@ -191,6 +221,18 @@ def route_to_vendor(method: str, *args, **kwargs):
             )
     else:
         vendor_chain = all_available_vendors
+
+    # Market-aware routing: for China A-shares, prefer akshare (authoritative CN
+    # data) and keep the configured vendors as fallback. The market is detected
+    # from the symbol arg on symbol-bearing calls and remembered for the run so
+    # symbol-less calls (global news, macro) inherit it.
+    if method in _SYMBOL_METHODS and args:
+        cn = is_ashare(str(args[0]))
+        set_active_market("cn" if cn else None)
+    else:
+        cn = get_active_market() == "cn"
+    if cn and "akshare" in VENDOR_METHODS[method]:
+        vendor_chain = ["akshare"] + [v for v in vendor_chain if v != "akshare"]
 
     last_no_data: NoMarketDataError | None = None
     first_error: Exception | None = None

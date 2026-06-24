@@ -25,6 +25,7 @@ import re
 
 # NoMarketDataError lives in the vendor-error taxonomy (errors.py); re-exported
 # here for the many call sites that import it alongside normalize_symbol.
+from .cn_market import parse_cn as _parse_cn, to_yahoo_symbol as _to_yahoo_cn
 from .errors import NoMarketDataError as NoMarketDataError
 
 logger = logging.getLogger(__name__)
@@ -119,10 +120,16 @@ def normalize_symbol(raw: str) -> str:
     s = s.rstrip("+")
 
     crypto = _normalize_crypto(s)
+    cn = _parse_cn(s)  # mainland A-share: bare 600519, SH600519, 600519.SH, ...
     if s in _ALIASES:
         canonical = _ALIASES[s]
     elif crypto is not None:
         canonical = crypto
+    elif cn is not None:
+        # Canonical Yahoo A-share form (600519.SS / 000001.SZ / 8xxxxx.BJ) so the
+        # parts still on Yahoo (alpha benchmark, identity) resolve, while akshare
+        # re-extracts the bare code from it. Fixes bare-code / SH-prefix inputs.
+        canonical = _to_yahoo_cn(s)
     elif len(s) == 6 and s[:3] in _FOREX_CURRENCIES and s[3:] in _FOREX_CURRENCIES:
         canonical = f"{s}=X"
     else:

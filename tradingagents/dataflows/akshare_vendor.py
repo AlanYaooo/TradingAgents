@@ -14,6 +14,7 @@ akshare is imported lazily (it is heavy) and every network call is wrapped in
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import datetime
 
@@ -83,10 +84,36 @@ def load_ohlcv_ak(symbol: str, curr_date: str) -> pd.DataFrame:
     code, _ex = parse_cn(symbol)
     curr_dt = pd.to_datetime(curr_date)
     start = (curr_dt - pd.DateOffset(years=2)).strftime("%Y-%m-%d")
-    # akshare end is inclusive; ask through curr_date.
-    data = _fetch_hist(code, start, curr_dt.strftime("%Y-%m-%d"))
-    if data.empty:
-        raise NoMarketDataError(symbol, code, "akshare returned no rows")
+    end = curr_dt.strftime("%Y-%m-%d")  # akshare end is inclusive
+
+    # Cache the fetched series. Unlike the yfinance path, akshare is otherwise
+    # uncached, so the market analyst (8 indicators + verified snapshot) would
+    # refetch the SAME series ~9x — slow and 9x more chances to hit a flaky
+    # endpoint. Cache keyed by code + window so those 9 calls share one fetch.
+    from .config import get_config
+
+    cache_dir = get_config().get("data_cache_dir")
+    data = None
+    cache_file = None
+    if cache_dir:
+        os.makedirs(cache_dir, exist_ok=True)
+        cache_file = os.path.join(cache_dir, f"{code}-akshare-{start}-{end}.csv")
+        if os.path.exists(cache_file):
+            try:
+                cached = pd.read_csv(cache_file, parse_dates=["Date"])
+                if not cached.empty and "Close" in cached.columns:
+                    data = cached
+            except Exception:  # noqa: BLE001 — poisoned cache -> refetch
+                data = None
+    if data is None:
+        data = _fetch_hist(code, start, end)
+        if data.empty:
+            raise NoMarketDataError(symbol, code, "akshare returned no rows")
+        if cache_file:
+            try:
+                data.to_csv(cache_file, index=False)
+            except Exception:  # noqa: BLE001
+                pass
 
     data = data[data["Date"] <= curr_dt].reset_index(drop=True)
     if data.empty:

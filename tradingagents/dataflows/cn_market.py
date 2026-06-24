@@ -15,6 +15,8 @@ from __future__ import annotations
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 
 logger = logging.getLogger(__name__)
 
@@ -178,19 +180,39 @@ def to_yahoo_symbol(symbol: str) -> str:
 
 
 # --- Retry wrapper for the flaky Chinese endpoints --------------------------
-def with_retry(fn, *, attempts: int = 6, base_delay: float = 1.0, label: str = ""):
-    """Call ``fn`` with retries. Chinese data endpoints intermittently drop the
-    connection ("RemoteDisconnected"); a couple of retries makes them reliable.
+# A shared thread pool gives every akshare call a hard wall-clock cap. Some
+# akshare endpoints don't set a request timeout, so a *stalled* connection (no
+# response, not a refusal) would otherwise hang the whole run forever. Running
+# the call in a worker thread and waiting with a timeout bounds it. Only the
+# data layer uses with_retry — the LLM (which legitimately streams for a long
+# time) never goes through here.
+_EXEC = ThreadPoolExecutor(max_workers=6, thread_name_prefix="akshare")
+
+
+def with_retry(fn, *, attempts: int = 4, base_delay: float = 1.0,
+               per_call_timeout: float = 30.0, label: str = ""):
+    """Call ``fn`` with retries and a per-attempt wall-clock cap.
+
+    Chinese data endpoints intermittently drop the connection
+    ("RemoteDisconnected") or stall without responding; retries fix the former
+    and the timeout fixes the latter. A timed-out attempt's thread is left to
+    finish on its own (a blocking socket can't be force-killed) rather than
+    blocking shutdown.
     """
     last = None
     for i in range(attempts):
+        fut = _EXEC.submit(fn)
         try:
-            return fn()
+            return fut.result(timeout=per_call_timeout)
+        except FuturesTimeout:
+            fut.cancel()
+            last = TimeoutError(f"akshare call {label!r} exceeded {per_call_timeout:.0f}s")
+            logger.debug("akshare call %s timed out (try %d/%d)", label, i + 1, attempts)
         except Exception as exc:  # noqa: BLE001 — retry any transient transport error
             last = exc
-            if i < attempts - 1:
-                logger.debug("akshare call %s failed (try %d/%d): %s", label, i + 1, attempts, exc)
-                time.sleep(base_delay * (i + 1))
+            logger.debug("akshare call %s failed (try %d/%d): %s", label, i + 1, attempts, exc)
+        if i < attempts - 1:
+            time.sleep(base_delay * (i + 1))
     raise last
 
 

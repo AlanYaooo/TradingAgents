@@ -200,14 +200,33 @@ PROVIDERS = {
     "OpenAI 兼容中转站": ("openai_compatible", True),
     "OpenAI": ("openai", False),
     "DeepSeek": ("deepseek", False),
+    "Kimi (Moonshot)": ("kimi", False),
     "Google Gemini": ("google", False),
     "通义千问 Qwen": ("qwen", False),
 }
-# 切换 provider 时自动填入该家常用的真实模型名（deep, quick），可手改。
-# 中转站(anthropic/openai_compatible)不在此表，沿用 .env 默认。
+# 各 provider 的可选模型（下拉选择，不手填）。中转站(anthropic/openai_compatible)
+# 走统一中转、服务全部家族，故给全集。
+_GPT = ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex"]
+_CLAUDE = ["claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6"]
+_DS = ["deepseek-v4-pro", "deepseek-v4-flash"]
+_KIMI = ["kimi-k2.7-code", "kimi-k2.6"]
+_RELAY = _GPT + _CLAUDE + _DS + _KIMI
 PROVIDER_MODELS = {
-    "deepseek": ("deepseek-reasoner", "deepseek-chat"),
-    "openai": ("gpt-4o", "gpt-4o-mini"),
+    "anthropic": _RELAY,
+    "openai_compatible": _RELAY,
+    "openai": _GPT,
+    "deepseek": _DS,
+    "kimi": _KIMI,
+    "google": ["gemini-1.5-pro", "gemini-1.5-flash"],
+    "qwen": ["qwen-plus", "qwen-turbo"],
+}
+# 每个 provider 的 (deep 默认, quick 默认)
+PROVIDER_DEFAULT = {
+    "anthropic": ("gpt-5.5", "gpt-5.4"),
+    "openai_compatible": ("gpt-5.5", "gpt-5.4"),
+    "openai": ("gpt-5.5", "gpt-5.4"),
+    "deepseek": ("deepseek-v4-pro", "deepseek-v4-flash"),
+    "kimi": ("kimi-k2.6", "kimi-k2.6"),
     "google": ("gemini-1.5-pro", "gemini-1.5-flash"),
     "qwen": ("qwen-plus", "qwen-turbo"),
 }
@@ -484,7 +503,7 @@ def build_report_html(state: dict, cfg: dict) -> str:
 # 侧边栏
 # ===========================================================================
 with st.sidebar:
-    st.markdown("### 🎛️ 标的")
+    st.markdown("### 🎯 分析对象")
     market_name = st.selectbox("市场 / 资产", list(MARKETS.keys()), label_visibility="collapsed")
     mkt = MARKETS[market_name]
     if st.session_state.get("_mkt") != market_name:
@@ -509,14 +528,15 @@ with st.sidebar:
     has_key = bool(key_env and os.environ.get(key_env))
     api_key = st.text_input(f"API Key · {key_env or '—'}", type="password",
                             placeholder="留空用 .env 中的值" if has_key else "粘贴 key")
-    if st.session_state.get("_prov") != provider:
-        st.session_state["_prov"] = provider
-        dm = PROVIDER_MODELS.get(provider)
-        st.session_state["deep_model"] = dm[0] if dm else os.environ.get("TRADINGAGENTS_DEEP_THINK_LLM", "gpt-5.5")
-        st.session_state["quick_model"] = dm[1] if dm else os.environ.get("TRADINGAGENTS_QUICK_THINK_LLM", "gpt-5.5")
+    # 模型用下拉选择（不可手填），每个 provider 一组、各自默认
+    models = PROVIDER_MODELS.get(provider, [])
+    ddef, qdef = PROVIDER_DEFAULT.get(provider, (models[0] if models else "", models[-1] if models else ""))
+    dk, qk = f"deep_{provider}", f"quick_{provider}"
+    st.session_state.setdefault(dk, ddef if ddef in models else (models[0] if models else ""))
+    st.session_state.setdefault(qk, qdef if qdef in models else (models[-1] if models else ""))
     cmc = st.columns(2)
-    deep_model = cmc[0].text_input("Deep 模型", key="deep_model")
-    quick_model = cmc[1].text_input("Quick 模型", key="quick_model")
+    deep_model = cmc[0].selectbox("Deep 模型 · 主力", models, key=dk)
+    quick_model = cmc[1].selectbox("Quick 模型 · 快速", models, key=qk)
 
     st.markdown("### ⚙️ 参数")
     language = st.radio("输出语言", ["中文", "English"], horizontal=True)

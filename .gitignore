@@ -226,4 +226,5 @@ reports/
 .uiruns/
 .playwright-mcp/
 /*-ui-*.png
+/ui-*.png
 /page-*.png

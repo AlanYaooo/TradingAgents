@@ -1,10 +1,8 @@
 """
 TradingAgents 可视化界面 (Streamlit)
 =================================================================
-- 市场/资产选择：A股 / 美股 / 港股 / 虚拟币（数据源自动路由）
-- LLM / API Key 配置（含 Anthropic 格式中转站）
-- 逐 agent 实时展示：每个分析师在做什么、研究员/风控如何辩论协作、
-  每一步的输出，直到最终决策报告
+多智能体交易分析的可视化前端：选市场/标的 → 配 LLM/API key →
+逐 agent 实时看分析、辩论、协作与每步输出 → 最终决策报告。
 
 运行：  streamlit run app.py
 """
@@ -12,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -19,324 +18,550 @@ from datetime import date, datetime
 
 import streamlit as st
 
-st.set_page_config(page_title="TradingAgents 多智能体分析", page_icon="📈", layout="wide")
+st.set_page_config(
+    page_title="TradingAgents · 多智能体交易分析",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-# --- 框架导入（放在 set_page_config 之后，便于报错显示在页面上）---
 try:
-    from langchain_core.callbacks import BaseCallbackHandler
-
-    from tradingagents.default_config import DEFAULT_CONFIG
-    from tradingagents.graph.trading_graph import TradingAgentsGraph
+    from tradingagents.default_config import DEFAULT_CONFIG  # noqa: F401
+    from tradingagents.graph.trading_graph import TradingAgentsGraph  # noqa: F401
     from tradingagents.llm_clients.api_key_env import PROVIDER_API_KEY_ENV
 except Exception as exc:  # noqa: BLE001
-    st.error(f"框架导入失败：{exc}\n\n请在仓库目录用 venv 运行：\n"
-             f"`.\\.venv\\Scripts\\streamlit run app.py`")
+    st.error(f"框架导入失败：{exc}\n\n请在仓库目录用 venv 运行： `.\\.venv\\Scripts\\streamlit run app.py`")
     st.stop()
 
 
-# ---------------------------------------------------------------------------
-# 配置数据
-# ---------------------------------------------------------------------------
-MARKETS = {
-    "🇨🇳 A股": dict(asset_type="stock", example="600519.SS",
-                   hint="沪 .SS / 深 .SZ / 北 .BJ，例：600519.SS、000001.SZ、830799.BJ",
-                   data="akshare（行情/财报/新闻/宏观/千股千评情绪）"),
-    "🇺🇸 美股": dict(asset_type="stock", example="NVDA",
-                   hint="例：AAPL、NVDA、TSLA、MSFT",
-                   data="yfinance + Reddit/StockTwits + Polymarket + FRED"),
-    "🇭🇰 港股": dict(asset_type="stock", example="0700.HK",
-                   hint="例：0700.HK（腾讯）、9988.HK（阿里）",
-                   data="yfinance"),
-    "₿ 虚拟币": dict(asset_type="crypto", example="BTC-USD",
-                   hint="例：BTC-USD、ETH-USD、SOL-USD",
-                   data="yfinance + Reddit/StockTwits + Polymarket（事件盘）"),
+# ===========================================================================
+# 主题 / 样式
+# ===========================================================================
+CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');
+
+:root{
+  --bg:#0B1220; --panel:#121E38; --panel2:#18233D; --soft:#0F1A30;
+  --border:#243352; --border-soft:#1C2A47;
+  --text:#E8EEF8; --muted:#93A1BC; --faint:#6B7A99;
+  --brand:#7C6CFF; --brand2:#4F8DFD; --cyan:#34D3EE;
+  --green:#22C55E; --red:#F0506E; --amber:#F6A723;
+}
+html, body, .stApp, [class*="css"]{ font-family:'Inter','Segoe UI',sans-serif !important; }
+code, pre, .stCode, [data-testid="stMetricValue"]{ font-family:'JetBrains Mono',monospace !important; }
+
+.stApp{
+  background:
+    radial-gradient(1100px 560px at 12% -8%, rgba(124,108,255,.16), transparent 60%),
+    radial-gradient(900px 520px at 96% 2%, rgba(52,211,238,.10), transparent 55%),
+    var(--bg);
+}
+[data-testid="stHeader"]{ background:transparent; }
+#MainMenu, footer, [data-testid="stToolbar"], [data-testid="stDecoration"]{ display:none !important; }
+.block-container{ padding-top:1.6rem; padding-bottom:3rem; max-width:1300px; }
+
+/* sidebar */
+section[data-testid="stSidebar"]{ background:#0C1730; border-right:1px solid var(--border-soft); }
+section[data-testid="stSidebar"] .block-container{ padding-top:1.2rem; }
+section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3{
+  font-size:.78rem !important; letter-spacing:.10em; text-transform:uppercase;
+  color:var(--faint) !important; font-weight:700; margin:.2rem 0 .4rem;
 }
 
-# provider 友好名 -> (provider id, 是否需要 base_url)
+/* widgets */
+[data-testid="stTextInput"] input, [data-testid="stDateInput"] input, .stSelectbox div[data-baseweb="select"]>div{
+  background:#0E1A33 !important; border:1px solid var(--border) !important; border-radius:10px !important;
+}
+.stButton>button{ border-radius:10px; font-weight:600; border:1px solid var(--border); background:#10203f; color:var(--text); transition:.15s; }
+.stButton>button:hover{ border-color:var(--brand); color:#fff; }
+.stButton>button[kind="primary"]{
+  background:linear-gradient(120deg,var(--brand),var(--brand2)); border:none; color:#fff;
+  box-shadow:0 8px 24px -8px rgba(124,108,255,.6); font-weight:700; letter-spacing:.02em;
+}
+.stButton>button[kind="primary"]:hover{ filter:brightness(1.08); }
+
+/* hero */
+.hero{
+  border:1px solid var(--border); border-radius:20px; padding:24px 30px; margin-bottom:18px;
+  background:linear-gradient(125deg,#16223f 0%,#111c34 55%,#0e1830 100%);
+  position:relative; overflow:hidden;
+}
+.hero::after{ content:""; position:absolute; right:-60px; top:-60px; width:240px; height:240px;
+  background:radial-gradient(circle,rgba(124,108,255,.35),transparent 70%); }
+.hero .brandrow{ display:flex; align-items:center; gap:14px; }
+.hero .logo{ width:46px; height:46px; border-radius:13px; display:flex; align-items:center; justify-content:center; flex:0 0 auto;
+  background:linear-gradient(135deg,var(--brand),var(--brand2)); box-shadow:0 10px 24px -8px rgba(124,108,255,.75); }
+.hero h1{ font-size:1.8rem; font-weight:800; margin:0; letter-spacing:-.01em;
+  background:linear-gradient(90deg,#fff,#bfd0ff 60%,#9fe9f5); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+.hero p{ color:var(--muted); margin:.6rem 0 0; font-size:.95rem; }
+.hero .tag{ display:inline-block; margin-top:12px; padding:4px 12px; border-radius:999px; font-size:.74rem; font-weight:600;
+  background:rgba(124,108,255,.14); color:#c3b8ff; border:1px solid rgba(124,108,255,.3); margin-right:8px; }
+
+/* cards */
+.card{ background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:18px 20px; margin-bottom:14px; }
+.card.soft{ background:var(--soft); }
+.sec-title{ font-size:.82rem; font-weight:700; letter-spacing:.10em; text-transform:uppercase; color:var(--faint); margin:18px 2px 8px; }
+
+/* stepper */
+.stepper{ display:flex; align-items:flex-start; gap:0; margin:6px 0 4px; }
+.step{ flex:1; text-align:center; position:relative; }
+.step .dot{ width:38px; height:38px; border-radius:50%; margin:0 auto 8px; display:flex; align-items:center; justify-content:center;
+  font-size:1.05rem; font-weight:700; border:1.5px solid var(--border); background:#0e1a33; color:var(--faint); transition:.2s; }
+.step .lbl{ font-size:.78rem; color:var(--muted); font-weight:600; }
+.step .sub{ font-size:.68rem; color:var(--faint); }
+.step::before{ content:""; position:absolute; top:18px; left:-50%; width:100%; height:2px; background:var(--border-soft); z-index:0; }
+.step:first-child::before{ display:none; }
+.step .dot{ position:relative; z-index:1; }
+.step.done .dot{ background:linear-gradient(135deg,#1d8f4e,#22C55E); border-color:transparent; color:#fff; box-shadow:0 6px 16px -6px rgba(34,197,94,.6); }
+.step.done .lbl{ color:#bff0cf; }
+.step.active .dot{ background:linear-gradient(135deg,var(--brand),var(--brand2)); border-color:transparent; color:#fff;
+  box-shadow:0 0 0 5px rgba(124,108,255,.18); animation:pulse 1.6s infinite; }
+.step.active .lbl{ color:#fff; }
+@keyframes pulse{ 0%,100%{box-shadow:0 0 0 5px rgba(124,108,255,.18);} 50%{box-shadow:0 0 0 9px rgba(124,108,255,.05);} }
+
+/* pills */
+.pill{ display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:999px; font-size:.72rem; font-weight:700; }
+.pill.run{ background:rgba(246,167,35,.14); color:#fcc56b; border:1px solid rgba(246,167,35,.3); animation:softpulse 1.5s ease-in-out infinite; }
+@keyframes softpulse{ 0%,100%{ opacity:1; } 50%{ opacity:.55; } }
+.pill.done{ background:rgba(34,197,94,.14); color:#7ee2a0; border:1px solid rgba(34,197,94,.3); }
+.pill.wait{ background:rgba(107,122,153,.12); color:var(--faint); border:1px solid var(--border-soft); }
+
+/* agent header */
+.ahead{ display:flex; align-items:center; justify-content:space-between; }
+.ahead .who{ display:flex; align-items:center; gap:10px; font-weight:700; font-size:.98rem; }
+.ahead .ic{ width:34px; height:34px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:1.05rem;
+  background:rgba(124,108,255,.12); border:1px solid var(--border); }
+
+/* chat bubbles */
+.bubble{ border-radius:14px; padding:13px 15px; font-size:.9rem; line-height:1.55; border:1px solid var(--border); }
+.bull{ background:linear-gradient(180deg,rgba(34,197,94,.08),rgba(34,197,94,.02)); border-color:rgba(34,197,94,.25); }
+.bear{ background:linear-gradient(180deg,rgba(240,80,110,.08),rgba(240,80,110,.02)); border-color:rgba(240,80,110,.25); }
+.btitle{ font-weight:700; font-size:.86rem; margin-bottom:6px; display:flex; gap:7px; align-items:center; }
+
+/* decision */
+.decision{ border:1px solid var(--border); border-radius:18px; padding:22px 26px;
+  background:linear-gradient(125deg,#16223f,#0f1a30); display:flex; align-items:center; gap:22px; flex-wrap:wrap; }
+.dbadge{ font-size:2.0rem; font-weight:800; letter-spacing:.02em; padding:10px 26px; border-radius:14px; }
+.buy{ color:#7ee2a0; background:rgba(34,197,94,.12); border:1px solid rgba(34,197,94,.4); }
+.sell{ color:#ff8aa0; background:rgba(240,80,110,.12); border:1px solid rgba(240,80,110,.4); }
+.hold{ color:#fcc56b; background:rgba(246,167,35,.12); border:1px solid rgba(246,167,35,.4); }
+
+/* kpi chips */
+.kpi{ display:flex; gap:12px; flex-wrap:wrap; }
+.chip{ background:var(--panel); border:1px solid var(--border); border-radius:13px; padding:11px 18px; min-width:120px; }
+.chip .k{ font-size:.7rem; color:var(--faint); text-transform:uppercase; letter-spacing:.07em; font-weight:600; }
+.chip .v{ font-size:1.25rem; font-weight:800; color:#fff; margin-top:2px; font-family:'JetBrains Mono',monospace; }
+
+[data-testid="stExpander"]{ border:1px solid var(--border) !important; border-radius:12px !important; background:var(--soft) !important; }
+hr{ border-color:var(--border-soft); }
+::-webkit-scrollbar{ width:9px; height:9px; } ::-webkit-scrollbar-thumb{ background:#26344f; border-radius:6px; } ::-webkit-scrollbar-track{ background:transparent; }
+</style>
+"""
+st.markdown(CSS, unsafe_allow_html=True)
+
+
+# ===========================================================================
+# 配置数据
+# ===========================================================================
+MARKETS = {
+    "🇨🇳 A股": dict(asset_type="stock", examples=["600519.SS", "000001.SZ", "300750.SZ"],
+                   data="akshare · 行情/财报/新闻/宏观/千股千评情绪"),
+    "🇺🇸 美股": dict(asset_type="stock", examples=["NVDA", "AAPL", "TSLA"],
+                   data="yfinance · +Reddit/StockTwits/Polymarket/FRED"),
+    "🇭🇰 港股": dict(asset_type="stock", examples=["0700.HK", "9988.HK", "3690.HK"],
+                   data="yfinance"),
+    "₿ 虚拟币": dict(asset_type="crypto", examples=["BTC-USD", "ETH-USD", "SOL-USD"],
+                   data="yfinance · +Reddit/StockTwits/Polymarket 事件盘"),
+}
 PROVIDERS = {
     "Anthropic / Claude（含中转站）": ("anthropic", True),
     "OpenAI 兼容中转站": ("openai_compatible", True),
     "OpenAI": ("openai", False),
     "DeepSeek": ("deepseek", False),
-    "Google / Gemini": ("google", False),
+    "Google Gemini": ("google", False),
     "通义千问 Qwen": ("qwen", False),
-    "本地 Ollama": ("ollama", True),
 }
-
-# 分析流水线阶段定义：(标题, 图标, 完成判定函数)
+# (显示名, 图标, state字段, framework key)
 ANALYSTS = [
-    ("市场/技术分析师", "📊", "market_report"),
-    ("情绪分析师", "💬", "sentiment_report"),
-    ("新闻分析师", "📰", "news_report"),
-    ("基本面分析师", "📑", "fundamentals_report"),
+    ("市场 / 技术分析师", "📊", "market_report", "market"),
+    ("情绪分析师", "💬", "sentiment_report", "social"),
+    ("新闻分析师", "📰", "news_report", "news"),
+    ("基本面分析师", "📑", "fundamentals_report", "fundamentals"),
 ]
 
 
-class StatsCallback(BaseCallbackHandler):
-    """统计 LLM 调用次数与 token 用量，用于页面成本展示。"""
-
-    def __init__(self):
-        self.llm_calls = 0
-        self.tokens_in = 0
-        self.tokens_out = 0
-
-    def on_llm_end(self, response, **kwargs):  # noqa: D401
-        self.llm_calls += 1
-        try:
-            usage = (response.llm_output or {}).get("token_usage") or {}
-            self.tokens_in += usage.get("prompt_tokens", 0) or usage.get("input_tokens", 0) or 0
-            self.tokens_out += usage.get("completion_tokens", 0) or usage.get("output_tokens", 0) or 0
-        except Exception:  # noqa: BLE001
-            pass
+# ===========================================================================
+# 渲染辅助
+# ===========================================================================
+def _nonempty(s) -> bool:
+    return bool((s or "").strip())
 
 
-# ---------------------------------------------------------------------------
-# 侧边栏：配置
-# ---------------------------------------------------------------------------
-with st.sidebar:
-    st.header("⚙️ 配置")
-
-    st.subheader("1. 标的")
-    market_name = st.selectbox("市场 / 资产类型", list(MARKETS.keys()))
-    mkt = MARKETS[market_name]
-    ticker = st.text_input("代码", value=mkt["example"], help=mkt["hint"])
-    st.caption(f"📡 数据源：{mkt['data']}")
-    trade_date = st.date_input("分析日期", value=date(2026, 6, 23),
-                               help="作为『当前日期』；回测会按此日期截断数据，防 look-ahead")
-
-    st.subheader("2. LLM / API Key")
-    prov_name = st.selectbox("Provider", list(PROVIDERS.keys()))
-    provider, needs_url = PROVIDERS[prov_name]
-    # 预填：已配置的 .env / 环境变量
-    env_url = os.environ.get("TRADINGAGENTS_LLM_BACKEND_URL", "")
-    base_url = st.text_input("Base URL（中转站端点，如 https://xxx）",
-                             value=env_url if needs_url else "",
-                             disabled=not needs_url,
-                             help="Anthropic 格式中转站选 Anthropic + 填这里")
-    key_env = PROVIDER_API_KEY_ENV.get(provider)
-    has_env_key = bool(key_env and os.environ.get(key_env))
-    api_key = st.text_input(
-        f"API Key（env: {key_env or '无需'}）", type="password",
-        placeholder="留空则用 .env / 环境变量中的值" if has_env_key else "",
-        help="留空时使用 .env 里已配置的 key",
-    )
-    c1, c2 = st.columns(2)
-    deep_model = c1.text_input("Deep 模型", value=os.environ.get("TRADINGAGENTS_DEEP_THINK_LLM", "gpt-5.5"))
-    quick_model = c2.text_input("Quick 模型", value=os.environ.get("TRADINGAGENTS_QUICK_THINK_LLM", "gpt-5.5"))
-
-    st.subheader("3. 分析参数")
-    language = st.radio("输出语言", ["中文", "English"], horizontal=True)
-    cc1, cc2 = st.columns(2)
-    debate_rounds = cc1.slider("多空辩论轮数", 1, 3, 1)
-    risk_rounds = cc2.slider("风控辩论轮数", 1, 3, 1)
-    analysts_sel = st.multiselect(
-        "启用的分析师", [a[0] for a in ANALYSTS], default=[a[0] for a in ANALYSTS],
-    )
-
-    run = st.button("🚀 开始分析", type="primary", use_container_width=True)
+def stages_of(state: dict):
+    ad = sum(_nonempty(state.get(k)) for _, _, k, _ in ANALYSTS)
+    ids = state.get("investment_debate_state") or {}
+    rds = state.get("risk_debate_state") or {}
+    return [
+        ("分析师", "🔍", ad == 4, f"{ad}/4 完成"),
+        ("研究辩论", "🐂", _nonempty(ids.get("judge_decision")), "多空 + 裁决"),
+        ("交易员", "💼", _nonempty(state.get("trader_investment_plan")), "交易方案"),
+        ("风控辩论", "🛡️", _nonempty(rds.get("judge_decision")), "三方评估"),
+        ("最终决策", "🎯", _nonempty(state.get("final_trade_decision")), "买/卖/持有"),
+    ]
 
 
-# ---------------------------------------------------------------------------
-# 主区：标题 + 协作说明
-# ---------------------------------------------------------------------------
-st.title("📈 TradingAgents 多智能体交易分析")
-st.caption("模拟真实交易公司：分析师团队 → 多空研究辩论 → 交易员 → 风控辩论 → 投资组合经理")
-
-with st.expander("🤝 智能体如何协作（点开看流程）", expanded=not run):
-    st.markdown(
-        """
-| 阶段 | 角色 | 协作方式 | 产出 |
-|---|---|---|---|
-| **① 分析师团队** | 市场/情绪/新闻/基本面 | 各自独立调用工具取数、并行产出报告 | 4 份分析报告 |
-| **② 研究员辩论** | 多头 🐂 vs 空头 🐻 | 轮流出论点互相反驳（可多轮），研究经理裁决 | 投资计划 |
-| **③ 交易员** | Trader | 综合分析+研究结论，拟定带价位的交易方案 | 交易计划 |
-| **④ 风控辩论** | 激进 / 保守 / 中立 | 三方就交易方案辩论风险 | 风险评估 |
-| **⑤ 投资组合经理** | Portfolio Manager | 拍板买/卖/持有 + 仓位 + 止损 | **最终决策** |
-
-数据源按市场自动路由：A股→akshare，美股/港股/币→yfinance（+Reddit/StockTwits/Polymarket/FRED）。
-        """
-    )
+def render_stepper(state: dict, running: bool):
+    stages = stages_of(state)
+    active_idx = next((i for i, s in enumerate(stages) if not s[2]), None) if running else None
+    html = ['<div class="stepper">']
+    for i, (label, icon, done, sub) in enumerate(stages):
+        cls = "done" if done else ("active" if i == active_idx else "todo")
+        dot = "✓" if done else icon
+        html.append(
+            f'<div class="step {cls}"><div class="dot">{dot}</div>'
+            f'<div class="lbl">{label}</div><div class="sub">{sub}</div></div>'
+        )
+    html.append("</div>")
+    st.markdown("".join(html), unsafe_allow_html=True)
 
 
-def render_analysts(state, ph):
-    cols = ph.columns(4)
-    for (name, icon, key), col in zip(ANALYSTS, cols, strict=False):
-        rep = state.get(key, "") or ""
-        with col:
-            done = bool(rep.strip())
-            st.markdown(f"**{icon} {name}** {'✅' if done else '⏳'}")
-            if done:
-                with st.expander("查看报告", expanded=False):
-                    st.markdown(rep)
-            else:
-                st.caption("分析中…")
+def render_kpis(state: dict, elapsed: float | None):
+    done = sum(s[2] for s in stages_of(state))
+    chips = [("进度", f"{done}/5"), ("LLM 调用", f"{state.get('llm_calls', 0)}")]
+    toks = (state.get("tok_in", 0) or 0) + (state.get("tok_out", 0) or 0)
+    if toks:
+        chips.append(("Tokens", f"{toks:,}"))
+    if elapsed is not None:
+        chips.append(("用时", f"{int(elapsed//60)}:{int(elapsed%60):02d}"))
+    html = '<div class="kpi">' + "".join(
+        f'<div class="chip"><div class="k">{k}</div><div class="v">{v}</div></div>' for k, v in chips
+    ) + "</div>"
+    st.markdown(html, unsafe_allow_html=True)
 
 
-def render_debate(state, ph):
-    ids = state.get("investment_debate_state", {}) or {}
+def _pill(done: bool, started: bool):
+    if done:
+        return '<span class="pill done">✓ 完成</span>'
+    if started:
+        return '<span class="pill run">● 进行中</span>'
+    return '<span class="pill wait">待开始</span>'
+
+
+def render_analysts(state: dict, ph, any_started: bool):
+    with ph.container():
+        cols = st.columns(2)
+        for i, (name, icon, key, _) in enumerate(ANALYSTS):
+            rep = (state.get(key) or "").strip()
+            with cols[i % 2]:
+                with st.container(border=True):
+                    st.markdown(
+                        f'<div class="ahead"><div class="who"><div class="ic">{icon}</div>{name}</div>'
+                        f'{_pill(bool(rep), any_started)}</div>', unsafe_allow_html=True)
+                    if rep:
+                        with st.expander("查看完整报告"):
+                            st.markdown(rep)
+                        st.caption(_first_line(rep))
+                    else:
+                        st.caption("分析中…取数与推理进行中" if any_started else "等待开始")
+
+
+def _first_line(text: str) -> str:
+    for ln in (text or "").splitlines():
+        s = ln.strip().lstrip("#").strip()
+        if s and not s.startswith("FINAL TRANSACTION"):
+            return ("摘要 · " + s)[:120]
+    return ""
+
+
+def render_debate(state: dict, ph):
+    ids = state.get("investment_debate_state") or {}
     bull, bear = (ids.get("bull_history") or "").strip(), (ids.get("bear_history") or "").strip()
     judge = (ids.get("judge_decision") or "").strip()
+    plan = (state.get("investment_plan") or "").strip()
     with ph.container():
         if not (bull or bear or judge):
-            st.caption("等待分析师报告完成后开始辩论…")
+            st.caption("分析师报告完成后，多空研究员开始辩论…")
             return
         a, b = st.columns(2)
         with a:
-            st.markdown("**🐂 多头研究员**")
-            st.markdown(bull or "_（未发言）_")
+            st.markdown('<div class="btitle">🐂 多头研究员</div>', unsafe_allow_html=True)
+            with st.container(border=True):
+                st.markdown(bull or "_等待发言_")
         with b:
-            st.markdown("**🐻 空头研究员**")
-            st.markdown(bear or "_（未发言）_")
-        if judge:
-            st.success("**🧑‍⚖️ 研究经理裁决 / 投资计划**")
-            st.markdown(state.get("investment_plan") or judge)
+            st.markdown('<div class="btitle">🐻 空头研究员</div>', unsafe_allow_html=True)
+            with st.container(border=True):
+                st.markdown(bear or "_等待发言_")
+        if judge or plan:
+            st.markdown('<div class="btitle">🧑‍⚖️ 研究经理裁决 → 投资计划</div>', unsafe_allow_html=True)
+            with st.container(border=True):
+                st.markdown(plan or judge)
 
 
-def render_trader(state, ph):
+def render_trader(state: dict, ph):
     plan = (state.get("trader_investment_plan") or "").strip()
     with ph.container():
         if plan:
-            st.markdown("**💼 交易员方案**")
-            st.markdown(plan)
+            with st.container(border=True):
+                st.markdown('<div class="btitle">💼 交易员方案</div>', unsafe_allow_html=True)
+                st.markdown(plan)
         else:
             st.caption("等待研究结论…")
 
 
-def render_risk(state, ph):
-    rds = state.get("risk_debate_state", {}) or {}
-    agg = (rds.get("aggressive_history") or "").strip()
-    con = (rds.get("conservative_history") or "").strip()
-    neu = (rds.get("neutral_history") or "").strip()
+def render_risk(state: dict, ph):
+    rds = state.get("risk_debate_state") or {}
+    items = [("🔥 激进", rds.get("aggressive_history")), ("🛡️ 保守", rds.get("conservative_history")),
+             ("⚖️ 中立", rds.get("neutral_history"))]
     with ph.container():
-        if not (agg or con or neu):
+        if not any((v or "").strip() for _, v in items):
             st.caption("等待交易方案…")
             return
-        a, b, c = st.columns(3)
-        a.markdown("**🔥 激进**"); a.markdown(agg or "_…_")
-        b.markdown("**🛡️ 保守**"); b.markdown(con or "_…_")
-        c.markdown("**⚖️ 中立**"); c.markdown(neu or "_…_")
+        cols = st.columns(3)
+        for col, (title, v) in zip(cols, items, strict=False):
+            with col:
+                st.markdown(f'<div class="btitle">{title}</div>', unsafe_allow_html=True)
+                with st.container(border=True):
+                    st.markdown((v or "").strip() or "_…_")
 
 
-def render_final(state, ph):
+_ACTIONS = [("BUY", "buy", ["buy", "买入", "增持", "看多", "overweight"]),
+            ("SELL", "sell", ["sell", "卖出", "减持", "看空", "underweight"]),
+            ("HOLD", "hold", ["hold", "持有", "观望", "中性", "neutral"])]
+
+
+def _decision_action(text: str):
+    t = (text or "").lower()
+    m = re.search(r"final transaction proposal:\s*\*?\*?\s*(buy|sell|hold)", t)
+    if m:
+        word = m.group(1)
+    else:
+        m2 = re.search(r"\*\*(?:action|rating)\*\*\s*[:：]\s*\*?\*?\s*(buy|sell|hold|买入|卖出|持有)", t)
+        word = m2.group(1) if m2 else None
+    if not word:
+        for label, cls, keys in _ACTIONS:
+            if any(k in t for k in keys):
+                return label, cls
+        return "—", "hold"
+    for label, cls, keys in _ACTIONS:
+        if word in keys or word == label.lower():
+            return label, cls
+    return word.upper(), "hold"
+
+
+def render_final(state: dict, ph):
     decision = (state.get("final_trade_decision") or "").strip()
     with ph.container():
-        if decision:
-            st.markdown("### 🎯 最终决策（投资组合经理）")
-            st.markdown(decision)
-        else:
+        if not decision:
             st.caption("等待风控辩论…")
+            return
+        label, cls = _decision_action(decision)
+        st.markdown(
+            f'<div class="decision"><div class="dbadge {cls}">{label}</div>'
+            f'<div style="flex:1;min-width:200px"><div style="color:var(--muted);font-size:.85rem">'
+            f'投资组合经理 · 最终交易决策</div></div></div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(decision)
 
 
-def stage_status(state):
-    """顶部流程状态条。"""
-    analysts_done = sum(bool((state.get(k) or "").strip()) for _, _, k in ANALYSTS)
-    ids = state.get("investment_debate_state", {}) or {}
-    rds = state.get("risk_debate_state", {}) or {}
-    steps = [
-        (f"分析师 {analysts_done}/4", analysts_done == 4),
-        ("研究辩论", bool((ids.get("judge_decision") or "").strip())),
-        ("交易员", bool((state.get("trader_investment_plan") or "").strip())),
-        ("风控辩论", bool((rds.get("judge_decision") or "").strip())),
-        ("最终决策", bool((state.get("final_trade_decision") or "").strip())),
-    ]
-    return " ➜ ".join(f"{'✅' if done else '⏳'} {label}" for label, done in steps)
+def render_pipeline(state: dict, phs, running: bool, any_started: bool):
+    render_analysts(state, phs["a"], any_started)
+    render_debate(state, phs["d"])
+    render_trader(state, phs["t"])
+    render_risk(state, phs["r"])
+    render_final(state, phs["f"])
 
 
-# ---------------------------------------------------------------------------
-# 运行
-# ---------------------------------------------------------------------------
-if run:
-    name2key = {"市场/技术分析师": "market", "情绪分析师": "social",
-                "新闻分析师": "news", "基本面分析师": "fundamentals"}
-    ui_cfg = {
-        "ticker": ticker.strip(),
+# ===========================================================================
+# 侧边栏
+# ===========================================================================
+with st.sidebar:
+    st.markdown("### 🎛️ 标的")
+    market_name = st.selectbox("市场 / 资产", list(MARKETS.keys()), label_visibility="collapsed")
+    mkt = MARKETS[market_name]
+    if st.session_state.get("_mkt") != market_name:
+        st.session_state["_mkt"] = market_name
+        st.session_state["ticker"] = mkt["examples"][0]
+    ticker = st.text_input("代码", key="ticker")
+    chip_cols = st.columns(len(mkt["examples"]))
+    for c, ex in zip(chip_cols, mkt["examples"], strict=False):
+        if c.button(ex, key=f"ex_{ex}", use_container_width=True):
+            st.session_state["ticker"] = ex
+            st.rerun()
+    st.caption(f"📡 {mkt['data']}")
+    trade_date = st.date_input("分析日期", value=date(2026, 6, 23))
+
+    st.markdown("### 🔌 LLM / API Key")
+    prov_name = st.selectbox("Provider", list(PROVIDERS.keys()))
+    provider, needs_url = PROVIDERS[prov_name]
+    base_url = st.text_input("Base URL（中转站）",
+                             value=os.environ.get("TRADINGAGENTS_LLM_BACKEND_URL", "") if needs_url else "",
+                             disabled=not needs_url, placeholder="https://...")
+    key_env = PROVIDER_API_KEY_ENV.get(provider)
+    has_key = bool(key_env and os.environ.get(key_env))
+    api_key = st.text_input(f"API Key · {key_env or '—'}", type="password",
+                            placeholder="留空用 .env 中的值" if has_key else "粘贴 key")
+    cmc = st.columns(2)
+    deep_model = cmc[0].text_input("Deep 模型", value=os.environ.get("TRADINGAGENTS_DEEP_THINK_LLM", "gpt-5.5"))
+    quick_model = cmc[1].text_input("Quick 模型", value=os.environ.get("TRADINGAGENTS_QUICK_THINK_LLM", "gpt-5.5"))
+
+    st.markdown("### ⚙️ 参数")
+    language = st.radio("输出语言", ["中文", "English"], horizontal=True)
+    rc = st.columns(2)
+    debate_rounds = rc[0].slider("多空轮数", 1, 3, 1)
+    risk_rounds = rc[1].slider("风控轮数", 1, 3, 1)
+    analysts_sel = st.multiselect("分析师", [a[0] for a in ANALYSTS], default=[a[0] for a in ANALYSTS])
+
+    run = st.button("🚀 开始分析", type="primary", use_container_width=True)
+    if st.session_state.get("result") and st.button("🗑️ 清除结果", use_container_width=True):
+        st.session_state.pop("result", None)
+        st.rerun()
+
+
+# ===========================================================================
+# 主区
+# ===========================================================================
+st.markdown(
+    '<div class="hero"><div class="brandrow"><div class="logo">'
+    '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" '
+    'stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 6"/>'
+    '<polyline points="15 6 21 6 21 12"/></svg></div><h1>TradingAgents</h1></div>'
+    '<p>多智能体交易分析 · 模拟真实交易公司的分工与协作，逐步推演到最终决策</p>'
+    '<span class="tag">分析师团队</span><span class="tag">多空辩论</span>'
+    '<span class="tag">风控评估</span><span class="tag">组合经理决策</span></div>',
+    unsafe_allow_html=True)
+
+
+# dev 预览：?demo=1 加载最近一次已完成的 run，用于设计调试（无需实跑）
+if st.query_params.get("demo") and "result" not in st.session_state:
+    import glob
+    _files = sorted(glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".uiruns", "*progress*.json")))
+    for _fp in reversed(_files):
+        try:
+            _d = json.load(open(_fp, encoding="utf-8"))
+            if _d.get("status") == "done" and (_d.get("final_trade_decision") or "").strip():
+                st.session_state["result"] = {"state": _d, "cfg": {"ticker": "BTC-USD", "date_str": "2026-06-23"}}
+                break
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _empty_state():
+    st.markdown('<div class="sec-title">分析流程</div>', unsafe_allow_html=True)
+    render_stepper({}, running=False)
+    st.markdown(
+        '<div class="card soft" style="margin-top:14px">'
+        '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px;text-align:center">'
+        '<div><div style="font-size:1.6rem">🔍</div><b>分析师团队</b><div style="color:var(--muted);font-size:.82rem;margin-top:4px">市场·情绪·新闻·基本面，各自取数产报告</div></div>'
+        '<div><div style="font-size:1.6rem">🐂</div><b>研究员辩论</b><div style="color:var(--muted);font-size:.82rem;margin-top:4px">多头 vs 空头，研究经理裁决</div></div>'
+        '<div><div style="font-size:1.6rem">💼</div><b>交易员</b><div style="color:var(--muted);font-size:.82rem;margin-top:4px">拟定带价位的交易方案</div></div>'
+        '<div><div style="font-size:1.6rem">🛡️</div><b>风控辩论</b><div style="color:var(--muted);font-size:.82rem;margin-top:4px">激进·保守·中立三方评估</div></div>'
+        '<div><div style="font-size:1.6rem">🎯</div><b>组合经理</b><div style="color:var(--muted);font-size:.82rem;margin-top:4px">最终买/卖/持有 + 仓位止损</div></div>'
+        '</div></div>', unsafe_allow_html=True)
+    st.info("👈 在左侧选择市场与标的、配置 API Key，点击 **开始分析**。数据源会按市场自动路由。")
+
+
+def _build_ui_cfg():
+    name2key = {a[0]: a[3] for a in ANALYSTS}
+    return {
+        "ticker": (ticker or "").strip(),
         "date_str": trade_date.strftime("%Y-%m-%d"),
         "asset_type": mkt["asset_type"],
         "provider": provider,
         "base_url": base_url or os.environ.get("TRADINGAGENTS_LLM_BACKEND_URL", ""),
-        "api_key": api_key,
-        "key_env": key_env,
-        "deep_model": deep_model,
-        "quick_model": quick_model,
+        "api_key": api_key, "key_env": key_env,
+        "deep_model": deep_model, "quick_model": quick_model,
         "output_language": "Chinese" if language == "中文" else "English",
-        "debate_rounds": debate_rounds,
-        "risk_rounds": risk_rounds,
+        "debate_rounds": debate_rounds, "risk_rounds": risk_rounds,
         "selected_analysts": [name2key[a[0]] for a in ANALYSTS if a[0] in analysts_sel],
     }
 
+
+def _placeholders():
+    out = {}
+    st.markdown('<div class="sec-title">① 分析师团队</div>', unsafe_allow_html=True); out["a"] = st.empty()
+    st.markdown('<div class="sec-title">② 研究员辩论（多空）</div>', unsafe_allow_html=True); out["d"] = st.empty()
+    st.markdown('<div class="sec-title">③ 交易员</div>', unsafe_allow_html=True); out["t"] = st.empty()
+    st.markdown('<div class="sec-title">④ 风控辩论</div>', unsafe_allow_html=True); out["r"] = st.empty()
+    st.markdown('<div class="sec-title">⑤ 最终决策</div>', unsafe_allow_html=True); out["f"] = st.empty()
+    return out
+
+
+if run:
+    ui_cfg = _build_ui_cfg()
+    if not ui_cfg["ticker"]:
+        st.error("请填写标的代码"); st.stop()
+
     here = os.path.dirname(os.path.abspath(__file__))
-    workdir = os.path.join(here, ".uiruns")
-    os.makedirs(workdir, exist_ok=True)
+    workdir = os.path.join(here, ".uiruns"); os.makedirs(workdir, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     cfg_path = os.path.join(workdir, f"cfg_{stamp}.json")
     progress_path = os.path.join(workdir, f"progress_{stamp}.json")
     with open(cfg_path, "w", encoding="utf-8") as f:
         json.dump(ui_cfg, f, ensure_ascii=False)
 
-    st.divider()
-    status_ph = st.empty()
-    status_ph.info(f"🔧 启动分析（独立进程）：{ticker} @ {ui_cfg['date_str']} · "
-                   f"{provider}/{deep_model} · {mkt['data']}")
+    st.markdown('<div class="sec-title">实时进度</div>', unsafe_allow_html=True)
+    step_ph, kpi_ph, status_ph = st.empty(), st.empty(), st.empty()
+    status_ph.info(f"🔧 启动分析 · {ui_cfg['ticker']} @ {ui_cfg['date_str']} · {provider}/{deep_model}")
+    phs = _placeholders()
 
-    # 在独立子进程运行图：akshare 内部用 py_mini_racer(V8)，在 Streamlit 脚本线程
-    # 里初始化会与其原生库冲突直接崩进程；子进程主线程隔离后稳定。
-    proc = subprocess.Popen(
-        [sys.executable, os.path.join(here, "ui_worker.py"), cfg_path, progress_path],
-        cwd=here,
-    )
+    proc = subprocess.Popen([sys.executable, os.path.join(here, "ui_worker.py"), cfg_path, progress_path], cwd=here)
 
-    st.subheader("① 分析师团队"); ph_analysts = st.empty()
-    st.subheader("② 研究员辩论（多空）"); ph_debate = st.empty()
-    st.subheader("③ 交易员"); ph_trader = st.empty()
-    st.subheader("④ 风控辩论（激进/保守/中立）"); ph_risk = st.empty()
-    st.subheader("⑤ 最终决策"); ph_final = st.empty()
-    stats_ph = st.empty()
-
-    def _read_progress():
+    def _read():
         try:
             with open(progress_path, encoding="utf-8") as f:
                 return json.load(f)
-        except Exception:  # noqa: BLE001 — file may be mid-write/absent
+        except Exception:  # noqa: BLE001
             return None
 
-    state, status = {}, "running"
-    with st.spinner("多智能体分析进行中（独立进程，几十次 LLM 调用，约几分钟）…"):
-        while True:
-            s = _read_progress()
+    state, status, t0 = {}, "running", time.time()
+    while True:
+        s = _read()
+        if s is not None:
+            state, status = s, s.get("status", "running")
+        elapsed = time.time() - t0
+        with step_ph.container():
+            render_stepper(state, running=(status == "running"))
+        with kpi_ph.container():
+            render_kpis(state, elapsed)
+        render_pipeline(state, phs, running=(status == "running"), any_started=True)
+        if status in ("done", "error"):
+            break
+        if proc.poll() is not None:
+            s = _read()
             if s is not None:
                 state, status = s, s.get("status", "running")
-            status_ph.info(stage_status(state))
-            render_analysts(state, ph_analysts)
-            render_debate(state, ph_debate)
-            render_trader(state, ph_trader)
-            render_risk(state, ph_risk)
-            render_final(state, ph_final)
-            stats_ph.caption(
-                f"📊 LLM 调用 {state.get('llm_calls', 0)} · "
-                f"输入 {state.get('tok_in', 0):,} / 输出 {state.get('tok_out', 0):,} tokens"
-            )
-            if status in ("done", "error"):
-                break
-            if proc.poll() is not None:
-                s = _read_progress()
-                if s is not None:
-                    state, status = s, s.get("status", "running")
-                if status not in ("done", "error"):
-                    status = "error"
-                    state = {**state, "error": f"worker 进程异常退出 (code {proc.returncode})"}
-                break
-            time.sleep(1.3)
+            if status not in ("done", "error"):
+                status, state = "error", {**state, "error": f"worker 进程异常退出 (code {proc.returncode})"}
+            break
+        time.sleep(1.3)
 
     if status == "error":
         status_ph.error("运行出错")
         st.error(state.get("error", "未知错误"))
     else:
-        status_ph.success(stage_status(state) + "  ——  ✅ 完成")
-        decision = state.get("final_trade_decision") or ""
-        if decision:
-            st.download_button("⬇️ 下载最终决策", decision,
-                               file_name=f"{ui_cfg['ticker']}_{ui_cfg['date_str']}_decision.md")
-        st.caption("📁 完整报告树已保存到 ~/.tradingagents/logs/reports/ 下。")
+        status_ph.success(f"✅ 分析完成 · 用时 {int((time.time()-t0)//60)} 分 {int((time.time()-t0)%60)} 秒")
+        st.session_state["result"] = {"state": state, "cfg": ui_cfg}
+        dec = state.get("final_trade_decision") or ""
+        if dec:
+            st.download_button("⬇️ 下载最终决策报告", dec,
+                               file_name=f"{ui_cfg['ticker']}_{ui_cfg['date_str']}_decision.md",
+                               use_container_width=False)
+
+elif st.session_state.get("result"):
+    res = st.session_state["result"]; state = res["state"]; cfg = res["cfg"]
+    label, cls = _decision_action(state.get("final_trade_decision") or "")
+    status_html = (f'最近一次分析 · <b style="color:#fff">{cfg["ticker"]}</b> @ {cfg["date_str"]} '
+                   f'· <span class="pill done">{label}</span>')
+    st.markdown(f'<div class="card soft">{status_html}</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec-title">分析流程</div>', unsafe_allow_html=True)
+    render_stepper(state, running=False)
+    render_kpis(state, None)
+    phs = _placeholders()
+    render_pipeline(state, phs, running=False, any_started=True)
+    dec = state.get("final_trade_decision") or ""
+    if dec:
+        st.download_button("⬇️ 下载最终决策报告", dec, file_name=f"{cfg['ticker']}_{cfg['date_str']}_decision.md")
+
 else:
-    st.info("👈 在左侧配置市场/标的和 API Key，点击「开始分析」。"
-            "支持 A股 / 美股 / 港股 / 虚拟币；数据源会自动路由。")
+    _empty_state()

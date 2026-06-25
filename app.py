@@ -78,7 +78,11 @@ code, pre, [data-testid="stMetricValue"]{ font-family:'JetBrains Mono',monospace
 .stApp{ background:var(--app-bg); color:var(--text); }
 .stApp, .stMarkdown, [data-testid="stMarkdownContainer"], p, li, span, label, td, th{ color:var(--text); }
 [data-testid="stHeader"]{ background:transparent; }
-#MainMenu, footer, [data-testid="stToolbar"], [data-testid="stDecoration"]{ display:none !important; }
+/* hide the Deploy/menu actions but KEEP stToolbar — the sidebar-expand
+   button lives inside it, so display:none on stToolbar breaks reopening. */
+#MainMenu, footer, [data-testid="stToolbarActions"], [data-testid="stAppDeployButton"], [data-testid="stDecoration"]{ display:none !important; }
+[data-testid="stExpandSidebarButton"]{ display:flex !important; visibility:visible !important; }
+[data-testid="stExpandSidebarButton"] button{ color:var(--text) !important; }
 .block-container{ padding-top:1.5rem; padding-bottom:3rem; max-width:1300px; }
 
 section[data-testid="stSidebar"]{ background:var(--sidebar); border-right:1px solid var(--border-soft); }
@@ -383,13 +387,6 @@ def render_pipeline(state: dict, phs, running: bool, any_started: bool):
 # 侧边栏
 # ===========================================================================
 with st.sidebar:
-    tc = st.radio("主题", ["🌙 深色", "☀️ 浅色"], horizontal=True, label_visibility="collapsed",
-                  index=0 if theme == "dark" else 1)
-    new_theme = "dark" if tc.startswith("🌙") else "light"
-    if new_theme != theme:
-        st.session_state["theme"] = new_theme
-        st.rerun()
-
     st.markdown("### 🎛️ 标的")
     market_name = st.selectbox("市场 / 资产", list(MARKETS.keys()), label_visibility="collapsed")
     mkt = MARKETS[market_name]
@@ -435,6 +432,14 @@ with st.sidebar:
 # ===========================================================================
 # 主区
 # ===========================================================================
+# 右上角小巧主题切换（不抢眼）
+_tcols = st.columns([11, 1])
+with _tcols[1]:
+    if st.button("☀️" if theme == "dark" else "🌙", key="theme_toggle",
+                 help="切换深色 / 浅色主题", use_container_width=True):
+        st.session_state["theme"] = "light" if theme == "dark" else "dark"
+        st.rerun()
+
 st.markdown(
     '<div class="hero"><div class="brandrow"><div class="logo">'
     '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" '

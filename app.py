@@ -210,7 +210,7 @@ _GPT = ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex"]
 _CLAUDE = ["claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6"]
 _DS = ["deepseek-v4-pro", "deepseek-v4-flash"]
 _KIMI = ["kimi-k2.7-code", "kimi-k2.6"]
-_RELAY = _GPT + _CLAUDE + _DS + _KIMI
+_RELAY = _GPT + _CLAUDE  # 中转站只服务 gpt 和 claude（deepseek/kimi 走各自官方直连）
 PROVIDER_MODELS = {
     "anthropic": _RELAY,
     "openai_compatible": _RELAY,

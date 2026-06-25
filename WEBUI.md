@@ -7,7 +7,7 @@
 
 ```bash
 # 在仓库目录、用装好依赖的环境
-pip install streamlit akshare        # 若尚未安装
+pip install streamlit akshare markdown   # 若尚未安装（markdown 用于导出 HTML 报告）
 streamlit run app.py
 # 或： .\.venv\Scripts\streamlit run app.py
 ```

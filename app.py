@@ -36,6 +36,11 @@ except Exception as exc:  # noqa: BLE001
     st.error(f"框架导入失败：{exc}\n\n请在仓库目录用 venv 运行： `.\\.venv\\Scripts\\streamlit run app.py`")
     st.stop()
 
+try:
+    import markdown as _md  # md -> html for the downloadable report
+except ImportError:
+    _md = None
+
 
 # ===========================================================================
 # 主题
@@ -392,6 +397,90 @@ def render_pipeline(state: dict, phs, running: bool, any_started: bool):
 
 
 # ===========================================================================
+# 可下载的 HTML 报告（双击即可在任意浏览器打开 / 打印）
+# ===========================================================================
+_REPORT_CSS = """
+*{box-sizing:border-box} body{margin:0;background:#eef1f6;color:#1f2733;line-height:1.7;
+  font-family:-apple-system,'Segoe UI','Microsoft YaHei',sans-serif}
+.wrap{max-width:880px;margin:24px auto;background:#fff;border-radius:14px;box-shadow:0 8px 34px rgba(30,40,80,.10);padding:38px 46px}
+.hd{display:flex;align-items:center;gap:18px;border-bottom:2px solid #eef1f6;padding-bottom:20px}
+.badge{color:#fff;font-weight:800;font-size:1.5rem;padding:8px 22px;border-radius:11px;letter-spacing:.04em}
+h1{font-size:1.4rem;margin:0;color:#16213c} .meta{color:#8a93a5;font-size:.88rem;margin-top:5px}
+section{margin:8px 0 6px}
+h2{font-size:1.18rem;color:#1b2440;border-left:4px solid #6a5bff;padding-left:12px;margin:32px 0 12px}
+h3{font-size:1.02rem;color:#34405c;margin:20px 0 8px}
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:.9rem}
+th,td{border:1px solid #e3e8f0;padding:8px 11px;text-align:left;vertical-align:top}
+th{background:#f4f7fb;font-weight:700} tr:nth-child(even) td{background:#fafbfd}
+code{background:#f0f2f7;padding:2px 5px;border-radius:4px;font-size:.9em}
+blockquote{border-left:3px solid #d6dbe6;margin:10px 0;padding:4px 14px;color:#5a6473}
+ul,ol{padding-left:22px} hr{border:none;border-top:1px solid #eef1f6;margin:20px 0}
+.ft{margin-top:34px;padding-top:16px;border-top:1px solid #eef1f6;color:#9aa3b2;font-size:.82rem;text-align:center}
+@media print{body{background:#fff}.wrap{box-shadow:none;margin:0;max-width:100%;border-radius:0}}
+"""
+
+
+def _md2html(text: str) -> str:
+    text = (text or "").strip()
+    if not text:
+        return ""
+    if _md is None:
+        import html
+        return f"<pre>{html.escape(text)}</pre>"
+    return _md.markdown(text, extensions=["tables", "fenced_code", "sane_lists", "nl2br"])
+
+
+def build_report_html(state: dict, cfg: dict) -> str:
+    label, cls = _decision_action(state.get("final_trade_decision") or "")
+    badge_color = {"buy": "#16a34a", "sell": "#dc2626", "hold": "#d97706"}.get(cls, "#64748b")
+    parts = []
+    for name, icon, key, _ in ANALYSTS:
+        rep = (state.get(key) or "").strip()
+        if rep:
+            parts.append(f"<section><h2>{icon} {name}</h2>{_md2html(rep)}</section>")
+    ids = state.get("investment_debate_state") or {}
+    bull, bear = (ids.get("bull_history") or "").strip(), (ids.get("bear_history") or "").strip()
+    judge = (state.get("investment_plan") or ids.get("judge_decision") or "").strip()
+    if bull or bear or judge:
+        d = ""
+        if bull:
+            d += f"<h3>🐂 多头研究员</h3>{_md2html(bull)}"
+        if bear:
+            d += f"<h3>🐻 空头研究员</h3>{_md2html(bear)}"
+        if judge:
+            d += f"<h3>🧑‍⚖️ 研究经理 · 投资计划</h3>{_md2html(judge)}"
+        parts.append(f"<section><h2>研究员辩论</h2>{d}</section>")
+    tp = (state.get("trader_investment_plan") or "").strip()
+    if tp:
+        parts.append(f"<section><h2>💼 交易员方案</h2>{_md2html(tp)}</section>")
+    rds = state.get("risk_debate_state") or {}
+    risk = ""
+    for t, k in [("🔥 激进", "aggressive_history"), ("🛡️ 保守", "conservative_history"), ("⚖️ 中立", "neutral_history")]:
+        v = (rds.get(k) or "").strip()
+        if v:
+            risk += f"<h3>{t}</h3>{_md2html(v)}"
+    if risk:
+        parts.append(f"<section><h2>风控辩论</h2>{risk}</section>")
+    fd = (state.get("final_trade_decision") or "").strip()
+    if fd:
+        parts.append(f"<section><h2>🎯 最终决策</h2>{_md2html(fd)}</section>")
+
+    return (
+        '<!doctype html><html lang="zh"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        f"<title>{cfg.get('ticker','')} 分析报告</title><style>{_REPORT_CSS}</style></head>"
+        '<body><div class="wrap"><div class="hd">'
+        f'<div class="badge" style="background:{badge_color}">{label}</div>'
+        f"<div><h1>{APP_NAME} · {cfg.get('ticker','')} 分析报告</h1>"
+        f'<div class="meta">分析日期 {cfg.get("date_str","")} · '
+        f"生成于 {datetime.now():%Y-%m-%d %H:%M}</div></div></div>"
+        + "".join(parts)
+        + f'<div class="ft">由 {APP_NAME}（TradingAgents 多智能体）生成 · 仅供研究，不构成投资建议</div>'
+        "</div></body></html>"
+    )
+
+
+# ===========================================================================
 # 侧边栏
 # ===========================================================================
 with st.sidebar:
@@ -573,10 +662,10 @@ if run:
     else:
         status_ph.success(f"✅ 分析完成 · 用时 {int((time.time()-t0)//60)} 分 {int((time.time()-t0)%60)} 秒")
         st.session_state["result"] = {"state": state, "cfg": ui_cfg}
-        dec = state.get("final_trade_decision") or ""
-        if dec:
-            st.download_button("⬇️ 下载最终决策报告", dec,
-                               file_name=f"{ui_cfg['ticker']}_{ui_cfg['date_str']}_decision.md")
+        if state.get("final_trade_decision"):
+            st.download_button("⬇️ 下载完整报告 (HTML，浏览器打开)", build_report_html(state, ui_cfg),
+                               file_name=f"{ui_cfg['ticker']}_{ui_cfg['date_str']}_report.html",
+                               mime="text/html")
 
 elif st.session_state.get("result"):
     res = st.session_state["result"]; state = res["state"]; cfg = res["cfg"]
@@ -589,9 +678,9 @@ elif st.session_state.get("result"):
     render_kpis(state, None)
     phs = _placeholders()
     render_pipeline(state, phs, running=False, any_started=True)
-    dec = state.get("final_trade_decision") or ""
-    if dec:
-        st.download_button("⬇️ 下载最终决策报告", dec, file_name=f"{cfg['ticker']}_{cfg['date_str']}_decision.md")
+    if state.get("final_trade_decision"):
+        st.download_button("⬇️ 下载完整报告 (HTML，浏览器打开)", build_report_html(state, cfg),
+                           file_name=f"{cfg['ticker']}_{cfg['date_str']}_report.html", mime="text/html")
 
 else:
     _empty_state()

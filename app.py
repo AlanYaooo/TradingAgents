@@ -198,6 +198,14 @@ PROVIDERS = {
     "Google Gemini": ("google", False),
     "通义千问 Qwen": ("qwen", False),
 }
+# 切换 provider 时自动填入该家常用的真实模型名（deep, quick），可手改。
+# 中转站(anthropic/openai_compatible)不在此表，沿用 .env 默认。
+PROVIDER_MODELS = {
+    "deepseek": ("deepseek-reasoner", "deepseek-chat"),
+    "openai": ("gpt-4o", "gpt-4o-mini"),
+    "google": ("gemini-1.5-pro", "gemini-1.5-flash"),
+    "qwen": ("qwen-plus", "qwen-turbo"),
+}
 ANALYSTS = [
     ("市场 / 技术分析师", "📊", "market_report", "market"),
     ("情绪分析师", "💬", "sentiment_report", "social"),
@@ -412,9 +420,14 @@ with st.sidebar:
     has_key = bool(key_env and os.environ.get(key_env))
     api_key = st.text_input(f"API Key · {key_env or '—'}", type="password",
                             placeholder="留空用 .env 中的值" if has_key else "粘贴 key")
+    if st.session_state.get("_prov") != provider:
+        st.session_state["_prov"] = provider
+        dm = PROVIDER_MODELS.get(provider)
+        st.session_state["deep_model"] = dm[0] if dm else os.environ.get("TRADINGAGENTS_DEEP_THINK_LLM", "gpt-5.5")
+        st.session_state["quick_model"] = dm[1] if dm else os.environ.get("TRADINGAGENTS_QUICK_THINK_LLM", "gpt-5.5")
     cmc = st.columns(2)
-    deep_model = cmc[0].text_input("Deep 模型", value=os.environ.get("TRADINGAGENTS_DEEP_THINK_LLM", "gpt-5.5"))
-    quick_model = cmc[1].text_input("Quick 模型", value=os.environ.get("TRADINGAGENTS_QUICK_THINK_LLM", "gpt-5.5"))
+    deep_model = cmc[0].text_input("Deep 模型", key="deep_model")
+    quick_model = cmc[1].text_input("Quick 模型", key="quick_model")
 
     st.markdown("### ⚙️ 参数")
     language = st.radio("输出语言", ["中文", "English"], horizontal=True)
@@ -485,7 +498,10 @@ def _build_ui_cfg():
     return {
         "ticker": (ticker or "").strip(), "date_str": trade_date.strftime("%Y-%m-%d"),
         "asset_type": mkt["asset_type"], "provider": provider,
-        "base_url": base_url or os.environ.get("TRADINGAGENTS_LLM_BACKEND_URL", ""),
+        # Only relay providers use a base_url. Do NOT fall back to the .env
+        # relay URL for native providers (DeepSeek/OpenAI/...), or their
+        # requests get sent to the relay and 401 (#relay-leak).
+        "base_url": (base_url or os.environ.get("TRADINGAGENTS_LLM_BACKEND_URL", "")) if needs_url else "",
         "api_key": api_key, "key_env": key_env, "deep_model": deep_model, "quick_model": quick_model,
         "output_language": "Chinese" if language == "中文" else "English",
         "debate_rounds": debate_rounds, "risk_rounds": risk_rounds,

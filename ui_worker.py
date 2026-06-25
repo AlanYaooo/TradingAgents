@@ -24,6 +24,8 @@ def main():
         os.environ[ui["key_env"]] = ui["api_key"]
     if ui.get("base_url"):
         os.environ["TRADINGAGENTS_LLM_BACKEND_URL"] = ui["base_url"]
+    else:
+        os.environ.pop("TRADINGAGENTS_LLM_BACKEND_URL", None)  # don't leak .env relay to native providers
 
     from langchain_core.callbacks import BaseCallbackHandler
 
@@ -50,7 +52,10 @@ def main():
 
     cfg = DEFAULT_CONFIG.copy()
     cfg["llm_provider"] = ui["provider"]
-    cfg["backend_url"] = ui.get("base_url") or cfg.get("backend_url")
+    # Empty base_url -> None (use the provider's native endpoint). Never fall
+    # back to DEFAULT_CONFIG's .env relay URL, or a native provider (DeepSeek/
+    # OpenAI/...) would be sent to the relay and 401.
+    cfg["backend_url"] = ui.get("base_url") or None
     cfg["deep_think_llm"] = ui["deep_model"]
     cfg["quick_think_llm"] = ui["quick_model"]
     cfg["output_language"] = ui["output_language"]

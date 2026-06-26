@@ -606,6 +606,19 @@ code{background:#f0f2f7;padding:2px 5px;border-radius:4px;font-size:.9em}
 blockquote{border-left:3px solid #d6dbe6;margin:10px 0;padding:4px 14px;color:#5a6473}
 ul,ol{padding-left:22px} hr{border:none;border-top:1px solid #eef1f6;margin:20px 0}
 .ft{margin-top:34px;padding-top:16px;border-top:1px solid #eef1f6;color:#9aa3b2;font-size:.82rem;text-align:center}
+.flow{display:flex;align-items:stretch;flex-wrap:wrap;gap:2px;margin:18px 0 10px}
+.fl-step{flex:1;min-width:88px;text-align:center;background:#f4f7fb;border:1px solid #e3e8f0;border-radius:11px;padding:11px 5px;display:flex;flex-direction:column;gap:4px;justify-content:center}
+.fl-ic{font-size:1.35rem}
+.fl-step .lb{font-size:.8rem;font-weight:600;color:#34405c}
+.fl-arrow{display:flex;align-items:center;color:#c2cad8;font-weight:700;padding:0 2px}
+.fl-final{background:#fff;border-width:2px}
+.fl-final .lb{font-size:1rem;font-weight:800}
+.chartbox{margin:14px 0;border:1px solid #e3e8f0;border-radius:12px;padding:12px 14px 8px;background:#fafbfd}
+.chartbox .hd2{display:flex;justify-content:space-between;color:#8a93a5;font-size:.82rem;margin-bottom:4px}
+.cards{display:flex;gap:12px;flex-wrap:wrap;margin:6px 0 4px}
+.kc{flex:1;min-width:120px;border:1px solid #e3e8f0;border-radius:11px;padding:10px 14px;background:#fafbfd}
+.kc .k{font-size:.72rem;color:#8a93a5;font-weight:600}
+.kc .v{font-size:1.12rem;font-weight:800;margin-top:3px;color:#1b2440}
 @media print{body{background:#fff}.wrap{box-shadow:none;margin:0;max-width:100%;border-radius:0}}
 """
 
@@ -618,6 +631,63 @@ def _md2html(text: str) -> str:
         import html
         return f"<pre>{html.escape(text)}</pre>"
     return _md.markdown(text, extensions=["tables", "fenced_code", "sane_lists", "nl2br"])
+
+
+def _flow_diagram_html(label: str, cls: str) -> str:
+    """决策流程图：分析师 → 多空辩论 → 交易员 → 风控 → 组合经理 → 决策（纯 HTML/CSS）。"""
+    color = {"buy": "#16a34a", "sell": "#dc2626", "hold": "#d97706"}.get(cls, "#64748b")
+    stages = [("🔍", "分析师团队"), ("🐂", "多空辩论"), ("💼", "交易员"), ("🛡️", "风控辩论"), ("🧭", "组合经理")]
+    html = '<div class="flow">'
+    for ic, lb in stages:
+        html += f'<div class="fl-step"><div class="fl-ic">{ic}</div><div class="lb">{lb}</div></div><div class="fl-arrow">▶</div>'
+    html += (f'<div class="fl-step fl-final" style="border-color:{color}">'
+             f'<div class="fl-ic">🎯</div><div class="lb" style="color:{color}">{label}</div></div></div>')
+    return html
+
+
+def _svg_candles(rows: list, w: int = 840, h: int = 230) -> str:
+    """把 K 线画成内联 SVG（无需 JS，报告 HTML 里任意浏览器可显示）。红涨绿跌。"""
+    rows = [r for r in (rows or []) if r][-90:]
+    if len(rows) < 2:
+        return ""
+    pad_l, pad_r, pad_t, pad_b = 6, 54, 10, 18
+    iw, ih = w - pad_l - pad_r, h - pad_t - pad_b
+    lo = min(r["low"] for r in rows)
+    hi = max(r["high"] for r in rows)
+    rng = (hi - lo) or 1
+    n = len(rows)
+    cw = iw / n
+    bw = max(1.4, cw * 0.62)
+
+    def yv(v):
+        return pad_t + (hi - v) / rng * ih
+
+    up, down = "#e23a3a", "#16a34a"
+    grid = []
+    for frac, val in [(0.0, hi), (0.5, lo + rng / 2), (1.0, lo)]:
+        gy = pad_t + frac * ih
+        grid.append(f'<line x1="{pad_l}" y1="{gy:.1f}" x2="{pad_l + iw}" y2="{gy:.1f}" stroke="#eef1f6"/>')
+        grid.append(f'<text x="{pad_l + iw + 4}" y="{gy + 3:.1f}" font-size="10" fill="#8a93a5">{val:.2f}</text>')
+    grid.append(f'<text x="{pad_l}" y="{h - 4}" font-size="10" fill="#8a93a5">{rows[0]["date"]}</text>')
+    grid.append(f'<text x="{pad_l + iw}" y="{h - 4}" font-size="10" fill="#8a93a5" text-anchor="end">{rows[-1]["date"]}</text>')
+    body = []
+    for i, r in enumerate(rows):
+        cx = pad_l + cw * (i + 0.5)
+        col = up if r["close"] >= r["open"] else down
+        body.append(f'<line x1="{cx:.1f}" y1="{yv(r["high"]):.1f}" x2="{cx:.1f}" y2="{yv(r["low"]):.1f}" stroke="{col}" stroke-width="1"/>')
+        oy, cyy = yv(r["open"]), yv(r["close"])
+        by, bh = min(oy, cyy), max(1.0, abs(cyy - oy))
+        body.append(f'<rect x="{cx - bw / 2:.1f}" y="{by:.1f}" width="{bw:.1f}" height="{bh:.1f}" fill="{col}"/>')
+    return (f'<svg viewBox="0 0 {w} {h}" width="100%" height="{h}" '
+            f'xmlns="http://www.w3.org/2000/svg">{"".join(grid)}{"".join(body)}</svg>')
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _report_kline(ticker: str) -> list:
+    try:
+        return ui_data.kline(ticker, "6mo", "1d")
+    except Exception:  # noqa: BLE001
+        return []
 
 
 def build_report_html(state: dict, cfg: dict) -> str:
@@ -655,6 +725,22 @@ def build_report_html(state: dict, cfg: dict) -> str:
     if fd:
         parts.append(f"<section><h2>🎯 最终决策</h2>{_md2html(fd)}</section>")
 
+    # 决策概览：流程图 + 价格走势图（让满屏文字之外先有"图"）
+    ticker = cfg.get("ticker", "")
+    name = ui_data.resolve_name(ticker, cfg.get("market", "")) if ticker else ticker
+    flow = _flow_diagram_html(label, cls)
+    kl = _report_kline(ticker)
+    chart = ""
+    if kl:
+        last, first = kl[-1]["close"], kl[0]["close"]
+        chg = (last / first - 1) * 100 if first else 0
+        cc = "#e23a3a" if chg >= 0 else "#16a34a"  # 红涨绿跌
+        chart = (f'<div class="chartbox"><div class="hd2">'
+                 f'<span>📈 {name or ticker} · 近 6 月走势（日线 · 红涨绿跌）</span>'
+                 f'<span>最新 <b>{last:.2f}</b> · 区间 <b style="color:{cc}">{chg:+.2f}%</b></span>'
+                 f'</div>{_svg_candles(kl)}</div>')
+    intro = f'<h2 style="margin-top:20px">决策概览</h2>{flow}{chart}'
+
     return (
         '<!doctype html><html lang="zh"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -664,6 +750,7 @@ def build_report_html(state: dict, cfg: dict) -> str:
         f"<div><h1>{APP_NAME} · {cfg.get('ticker','')} 分析报告</h1>"
         f'<div class="meta">分析日期 {cfg.get("date_str","")} · '
         f"生成于 {datetime.now():%Y-%m-%d %H:%M}</div></div></div>"
+        + intro
         + "".join(parts)
         + f'<div class="ft">由 {APP_NAME}（TradingAgents 多智能体）生成 · 仅供研究，不构成投资建议</div>'
         "</div></body></html>"
@@ -773,37 +860,40 @@ def render_market_page() -> None:
 
 
 # ---- 个股详情：K 线走势 + 一键 AI 分析 -------------------------------------
-@st.cache_data(ttl=300, show_spinner=False)
-def _kline_cached(ticker: str, days: int) -> list:
-    return ui_data.kline(ticker, days)
+@st.cache_data(ttl=120, show_spinner=False)
+def _kline_cached(ticker: str, period: str, interval: str) -> list:
+    return ui_data.kline(ticker, period, interval)
 
 
-_PERIODS = {"近 1 月": 22, "近 3 月": 66, "近 6 月": 130, "近 1 年": 252}
+# 周期 -> (yfinance period, interval)。分时/5日为日内级别（参考富途/同花顺的分时+多周期）
+_PERIODS = {
+    "分时": ("1d", "5m"), "5 日": ("5d", "30m"), "1 月": ("1mo", "1d"),
+    "3 月": ("3mo", "1d"), "6 月": ("6mo", "1d"), "1 年": ("1y", "1d"),
+}
 
 
-def _kline_figure(rows: list, market: str):
+def _kline_figure(rows: list):
     t = THEMES.get(theme, THEMES["dark"])
     up, down = t["red"], t["green"]  # A 股惯例：红涨绿跌
     grid = t["border_soft"]
-    dates = [r["date"] for r in rows]
+    x = [r["dt"] for r in rows]  # 类别轴：candle 等距排列，自动无周末/隔夜跳空（同主流软件）
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.02,
                         row_heights=[0.76, 0.24])
     fig.add_trace(go.Candlestick(
-        x=dates, open=[r["open"] for r in rows], high=[r["high"] for r in rows],
+        x=x, open=[r["open"] for r in rows], high=[r["high"] for r in rows],
         low=[r["low"] for r in rows], close=[r["close"] for r in rows],
         increasing_line_color=up, decreasing_line_color=down,
         increasing_fillcolor=up, decreasing_fillcolor=down, line_width=1,
         name="K线", showlegend=False), row=1, col=1)
     vol_colors = [up if r["close"] >= r["open"] else down for r in rows]
-    fig.add_trace(go.Bar(x=dates, y=[r["volume"] for r in rows], marker_color=vol_colors,
+    fig.add_trace(go.Bar(x=x, y=[r["volume"] for r in rows], marker_color=vol_colors,
                          marker_line_width=0, opacity=0.55, showlegend=False, name="量"), row=2, col=1)
     fig.update_layout(height=440, margin=dict(l=6, r=54, t=6, b=6), dragmode="pan",
                       paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                       font=dict(color=t["muted"], size=11), hovermode="x unified",
                       xaxis_rangeslider_visible=False, bargap=0.2)
-    breaks = [] if market == "₿ 虚拟币" else [dict(bounds=["sat", "mon"])]
-    fig.update_xaxes(showgrid=False, rangebreaks=breaks, row=1, col=1)
-    fig.update_xaxes(showgrid=False, rangebreaks=breaks, row=2, col=1)
+    fig.update_xaxes(type="category", showgrid=False, nticks=8, row=1, col=1)
+    fig.update_xaxes(type="category", showgrid=False, nticks=8, row=2, col=1)
     fig.update_yaxes(gridcolor=grid, side="right", row=1, col=1, tickfont=dict(size=10))
     fig.update_yaxes(showgrid=False, side="right", row=2, col=1, tickfont=dict(size=9))
     return fig
@@ -831,19 +921,19 @@ def render_detail_page(focus: dict) -> None:
         f'<div><div style="font-size:1.35rem;font-weight:800">{flag} {name}</div>'
         f'<div style="color:var(--faint);font-family:JetBrains Mono;font-size:.85rem">{ticker}</div></div>'
         f'<div style="text-align:right">{px_html}</div></div>', unsafe_allow_html=True)
-    # 周期 + K 线
-    per = st.segmented_control("周期", list(_PERIODS.keys()), default="近 3 月",
+    # 周期 + K 线（分时 / 5日 / 1月 / 3月 / 6月 / 1年）
+    per = st.segmented_control("周期", list(_PERIODS.keys()), default="3 月",
                                key="kline_period", label_visibility="collapsed")
-    days = _PERIODS.get(per or "近 3 月", 66)
+    period, interval = _PERIODS.get(per or "3 月", ("3mo", "1d"))
     with st.spinner("加载 K 线…"):
-        rows = _kline_cached(ticker, days)
+        rows = _kline_cached(ticker, period, interval)
     if not rows:
-        st.warning("暂无 K 线数据（该标的可能在 Yahoo 无历史行情）。")
+        st.warning("暂无 K 线数据（该标的可能在 Yahoo 无对应周期行情）。")
     elif go is None:
         st.line_chart({"收盘价": [r["close"] for r in rows]})
     else:
         with st.container(border=True):
-            st.plotly_chart(_kline_figure(rows, market), use_container_width=True,
+            st.plotly_chart(_kline_figure(rows), use_container_width=True,
                             config={"displayModeBar": False, "scrollZoom": True})
     # 一键分析
     st.button(f"🔬 用多智能体分析 {name}", type="primary", use_container_width=True,

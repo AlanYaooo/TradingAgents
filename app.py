@@ -363,6 +363,56 @@ def delete_history(hid: str) -> None:
         pass
 
 
+def _infer_market(ticker: str) -> str:
+    t = (ticker or "").upper()
+    if ui_data.cn_code(t):
+        return ui_data.CN
+    if t.endswith(".HK"):
+        return ui_data.HK
+    if t.endswith("-USD"):
+        return ui_data.CRYPTO
+    return ui_data.US
+
+
+def migrate_uiruns_to_history() -> None:
+    """一次性把 .uiruns 里历史上「已完成」的分析导入历史库。
+    用 marker 标记只跑一次——避免重复导入，也避免用户删掉的记录又被迁回来。"""
+    marker = os.path.join(HISTORY_DIR, ".migrated")
+    if os.path.exists(marker):
+        return
+    import glob
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        os.makedirs(HISTORY_DIR, exist_ok=True)
+        for prog in sorted(glob.glob(os.path.join(here, ".uiruns", "progress_*.json"))):
+            stamp = os.path.basename(prog)[len("progress_"):-len(".json")]
+            hpath = os.path.join(HISTORY_DIR, f"{stamp}.json")
+            if os.path.exists(hpath):
+                continue
+            try:
+                state = json.load(open(prog, encoding="utf-8"))
+                if state.get("status") != "done" or not (state.get("final_trade_decision") or "").strip():
+                    continue
+                cfg_path = os.path.join(here, ".uiruns", f"cfg_{stamp}.json")
+                cfg = json.load(open(cfg_path, encoding="utf-8")) if os.path.exists(cfg_path) else {}
+                ticker = cfg.get("ticker", "")
+                market = cfg.get("market") or _infer_market(ticker)
+                cfg["market"] = market
+                label, cls = _decision_action(state.get("final_trade_decision") or "")
+                ts = (f"{stamp[0:4]}-{stamp[4:6]}-{stamp[6:8]} {stamp[9:11]}:{stamp[11:13]}"
+                      if len(stamp) >= 13 else stamp)
+                item = {"id": stamp, "ts": ts, "ticker": ticker,
+                        "name": ui_data.resolve_name(ticker, market) if ticker else ticker,
+                        "market": market, "date_str": cfg.get("date_str", ""),
+                        "decision": label, "decision_cls": cls, "state": state, "cfg": cfg}
+                json.dump(item, open(hpath, "w", encoding="utf-8"), ensure_ascii=False)
+            except Exception:  # noqa: BLE001
+                pass
+        open(marker, "w").close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _set_target(market: str, ticker: str) -> None:
     # 在 on_click 回调里改 widget state 才合法（内联改 widget key 会抛异常）
     if market in MARKETS:
@@ -870,6 +920,7 @@ def _history_report_datauri(hid: str):
 
 def render_history_page() -> None:
     st.markdown('<div class="sec-title">📜 历史分析记录</div>', unsafe_allow_html=True)
+    migrate_uiruns_to_history()  # 首次：把功能上线前跑过的分析补进来
     items = load_history_index()
     if not items:
         st.info("还没有历史记录。每完成一次分析会自动存档在这里，可随时查看；想删时点 🗑️ 删除。")

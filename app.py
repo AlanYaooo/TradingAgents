@@ -74,7 +74,7 @@ THEMES = {
     "light": dict(
         bg="#F3F6FC", panel="#FFFFFF", panel2="#EEF2FB", soft="#F8FAFE",
         border="#E0E7F2", border_soft="#EAEFF8",
-        text="#16213C", muted="#56627B", faint="#93A0B8",
+        text="#16213C", muted="#56627B", faint="#687490",  # 调深达 ~4.5:1 对比 (WCAG)
         brand="#6A5BFF", brand2="#3F7DF0", cyan="#0E9FC4",
         green="#16A34A", red="#DC2C56", amber="#C77508",
         sidebar="#EFF3FB",
@@ -111,9 +111,11 @@ section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3{
 [data-baseweb="input"], [data-baseweb="base-input"], [data-baseweb="select"]>div{ background:var(--panel2) !important; border-color:var(--border) !important; }
 [data-baseweb="input"] input{ background:transparent !important; color:var(--text) !important; }
 [data-baseweb="popover"] [role="listbox"], [data-baseweb="menu"], [data-baseweb="calendar"]{ background:var(--panel) !important; color:var(--text) !important; }
-.stButton>button{ border-radius:10px; font-weight:600; border:1px solid var(--border); background:var(--panel2); color:var(--text); transition:.15s; }
-.stButton>button:hover{ border-color:var(--brand); }
-.stButton>button[kind="primary"]{ background:linear-gradient(120deg,var(--brand),var(--brand2)); border:none; color:#fff;
+/* 用后代选择器(.stButton button)而非直接子(>)：带 help= 的按钮会被包进 stTooltipHoverTarget，
+   不是 .stButton 直接子元素，否则主题色匹配不到、浅色下变黑（如主题切换/自选项按钮） */
+.stButton button{ border-radius:10px; font-weight:600; border:1px solid var(--border); background:var(--panel2) !important; color:var(--text) !important; transition:.15s; }
+.stButton button:hover{ border-color:var(--brand) !important; }
+.stButton button[kind="primary"]{ background:linear-gradient(120deg,var(--brand),var(--brand2)) !important; border:none; color:#fff !important;
   box-shadow:0 8px 24px -8px rgba(124,108,255,.6); font-weight:700; letter-spacing:.02em; }
 .stButton>button[kind="primary"]:hover{ filter:brightness(1.08); }
 div[data-testid="stVerticalBlockBorderWrapper"]{ background:var(--panel) !important; border-color:var(--border) !important; border-radius:14px !important; box-shadow:var(--shadow); }
@@ -173,6 +175,31 @@ div[data-testid="stVerticalBlockBorderWrapper"]{ background:var(--panel) !import
 
 hr{ border-color:var(--border-soft); }
 ::-webkit-scrollbar{ width:9px; height:9px; } ::-webkit-scrollbar-thumb{ background:var(--border); border-radius:6px; } ::-webkit-scrollbar-track{ background:transparent; }
+
+/* 分段控件(市场/导航切换)：未选中段默认用 config 的 secondaryBackgroundColor(深色硬编码)，
+   浅色主题下会变黑框 —— 用主题变量覆盖，让它随深/浅色切换 */
+[data-testid="stButtonGroup"] button[kind="segmented_control"]{
+  background:var(--panel2) !important; color:var(--text) !important; border:1px solid var(--border) !important; }
+[data-testid="stButtonGroup"] button[kind="segmented_control"]:hover{ border-color:var(--brand) !important; }
+[data-testid="stButtonGroup"] button[kind="segmented_controlActive"]{
+  background:rgba(124,108,255,.15) !important; color:var(--brand) !important; border:1px solid var(--brand) !important; }
+
+/* —— UI/UX 质量基线（ui-ux-pro-max：accessibility / 数字对齐 / 动效） —— */
+/* 数字等宽对齐：价格/涨跌/KPI 列不再左右跳动（number-tabular） */
+code, pre, [data-testid="stMetricValue"], .chip .v, .dbadge,
+[style*="JetBrains Mono"]{ font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; }
+/* 可见焦点态：键盘用户可达（focus-states, HIGH） */
+.stButton>button:focus-visible, a:focus-visible,
+[data-baseweb="input"] input:focus-visible, [data-baseweb="select"] > div:focus-within,
+[data-testid="stDateInputField"]:focus-visible{
+  outline:2px solid var(--brand) !important; outline-offset:2px; }
+a{ cursor:pointer; }
+/* 尊重系统"减弱动效"：关闭脉冲/过渡，避免眩晕（reduced-motion, HIGH a11y） */
+@media (prefers-reduced-motion: reduce){
+  *, *::before, *::after{ animation-duration:.001ms !important; animation-iteration-count:1 !important;
+    transition-duration:.001ms !important; scroll-behavior:auto !important; }
+  .step.active .dot, .pill.run{ animation:none !important; }
+}
 """
 
 

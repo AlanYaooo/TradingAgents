@@ -447,15 +447,12 @@ def get_global_news(curr_date: str, look_back_days: int = None, limit: int = Non
     if not win.empty:
         use = win  # look-ahead-safe: strictly on/before curr_date
     else:
-        # stock_info_global_em is a REAL-TIME feed: it only holds the latest
-        # ~200 flashes. When curr_date precedes them (live run dated "today" but
-        # the feed clock is a few hours into the next day, or the feed has
-        # scrolled past curr_date), serve the latest as a live snapshot with an
-        # explicit note rather than aborting. For a true backtest this is the
-        # only data the feed can give; the note makes the as-of time clear.
-        use = df
-        latest = df["发布时间"].max()
-        note = f"（注：实时快讯，最新条目时间 {latest:%Y-%m-%d %H:%M}，按实时快照处理）"
+        # look-back 窗口内没有快讯时，放宽到"截至 curr_date"的最新快照——但仍按 < cutoff
+        # 过滤，绝不把 curr_date 之后的实时快讯泄漏进回测（look-ahead 安全）。
+        use = df[df["发布时间"] < cutoff]
+        if not use.empty:
+            latest = use["发布时间"].max()
+            note = f"（注：look-back 窗口内无快讯，放宽至截至 {latest:%Y-%m-%d %H:%M} 的最新快照）"
     if use.empty:
         raise NoMarketDataError("global", "global", "akshare returned no global news")
     lines = [f"# 全球财经快讯 (akshare/东财) — 截至 {curr_date} {note}", ""]

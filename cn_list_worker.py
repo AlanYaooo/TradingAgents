@@ -34,23 +34,29 @@ def main() -> None:
 
     import akshare as ak
 
-    # 官方交易所源 -> 干净全名。注意：SH 的「证券简称」被截断到 6 字（"XD贵州茅"），
-    # 用「证券全称」才完整（"贵州茅台"）；stock_info_a_code_name 同样是截断名，弃用。
+    # 官方交易所源 -> 干净简称。注意 SH：
+    #   - 「证券简称」被截断到 6 字（"XD贵州茅"），且带 XD/ST 前缀；
+    #   - 「证券全称」对部分股是法定全名（"上海浦东发展银行股份有限公司"），会破坏搜索；
+    #   - 「公司简称」最干净（"贵州茅台"，无前缀不截断），优先用它，再回退全称/简称。
     sources = [
-        (lambda: ak.stock_info_sh_name_code(symbol="主板A股"), "证券代码", "证券全称"),
-        (lambda: ak.stock_info_sh_name_code(symbol="科创板"), "证券代码", "证券全称"),
-        (ak.stock_info_sz_name_code, "A股代码", "A股简称"),
-        (ak.stock_info_bj_name_code, "证券代码", "证券简称"),
+        (lambda: ak.stock_info_sh_name_code(symbol="主板A股"), "证券代码", ["公司简称", "证券全称", "证券简称"]),
+        (lambda: ak.stock_info_sh_name_code(symbol="科创板"), "证券代码", ["公司简称", "证券全称", "证券简称"]),
+        (ak.stock_info_sz_name_code, "A股代码", ["A股简称"]),
+        (ak.stock_info_bj_name_code, "证券代码", ["证券简称"]),
     ]
     seen: dict[str, str] = {}
-    for fn, ccol, ncol in sources:
+    for fn, ccol, ncols in sources:
         try:
             df = fn()
         except Exception:  # noqa: BLE001
             continue
         for r in df.to_dict("records"):
             code = str(r.get(ccol, "")).strip()
-            name = _clean(r.get(ncol, ""))
+            name = ""
+            for nc in ncols:  # 按候选列优先级取第一个非空的
+                name = _clean(r.get(nc, ""))
+                if name:
+                    break
             if code and name and code not in seen:
                 seen[code] = name
     lst = [{"code": c, "name": n} for c, n in seen.items()]

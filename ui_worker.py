@@ -122,12 +122,18 @@ def main():
     try:
         ta = TradingAgentsGraph(selected_analysts=selected, debug=False,
                                 config=cfg, callbacks=[stats])
+        ta.ticker = ticker
+        set_analysis_date(date_str)
+        set_active_market("cn" if is_ashare(ticker) else None)
+        # 学习回路(同 propagate)：先结算历史决策的盈亏，再把教训喂进本次的记忆上下文。
+        try:
+            ta._resolve_pending_entries(ticker)
+        except Exception:
+            pass
         past = ta.memory_log.get_past_context(ticker)
         ictx = ta.resolve_instrument_context(ticker, asset_type)
         init = ta.propagator.create_initial_state(
             ticker, date_str, asset_type=asset_type, past_context=past, instrument_context=ictx)
-        set_analysis_date(date_str)
-        set_active_market("cn" if is_ashare(ticker) else None)
         last = init
         write(init, "running")
 
@@ -135,6 +141,18 @@ def main():
             last = chunk
             write(chunk, "running")
 
+        # 跑后(同 _run_graph)：写状态日志 + 记录本次决策，供未来同标的运行反思学习。
+        ta.curr_state = last
+        try:
+            ta._log_state(date_str, last)
+        except Exception:
+            pass
+        try:
+            if (last.get("final_trade_decision") or "").strip():
+                ta.memory_log.store_decision(ticker=ticker, trade_date=date_str,
+                                             final_trade_decision=last["final_trade_decision"])
+        except Exception:
+            pass
         try:
             ta.save_reports(last, ticker)
         except Exception:

@@ -137,7 +137,7 @@ def _em_clist_all(fs: str, conc: int = 5) -> list[dict]:
     """全市场分页：并发 conc + 多 host，缺失页重试多轮（eastmoney 偶发掉连接）。"""
     total, first = _clist_page(1, fs)
     if not total:
-        return first
+        return first, bool(first)
     pages = max(1, math.ceil(total / 100))
     got = {1: first}
     for _round in range(5):
@@ -153,7 +153,8 @@ def _em_clist_all(fs: str, conc: int = 5) -> list[dict]:
     merged = []
     for pn in sorted(got):
         merged.extend(got[pn])
-    return merged
+    complete = (len(got) == pages)  # 1..pages 每页都拿到（空页被丢弃，故页数即完整性）
+    return merged, complete
 
 
 # --- 名称全表（按天缓存）----------------------------------------------------
@@ -194,9 +195,11 @@ def instrument_list(market: str, force: bool = False) -> list[dict]:
     if market == CN:
         _refresh_cn_list()
     else:
-        lst = _em_clist_all(_FS[market])
-        if lst:
-            _write_list(market, lst)
+        lst, complete = _em_clist_all(_FS[market])
+        if lst and complete:
+            _write_list(market, lst)  # 只缓存完整结果
+        elif lst:
+            return lst  # 残缺：本次可用但不写缓存，下次再拉全（避免一整天用残表）
     fresh = _read_list(market)
     if fresh.get("list"):
         return fresh["list"]
@@ -276,9 +279,12 @@ def search(query: str, market: str, n: int = 8) -> list[dict]:
             tk = _to_ticker(code, market)
             cu, tu = code.upper(), tk.upper()
             if qu in cu or qu in tu:
-                # 代码/ticker 命中：精确匹配优先，再按代码长度（短的常是正股）
-                exact = qu in (cu, tu, tu.replace(".HK", ""))
-                code_hits.append((0 if exact else 1, len(code), name, tk))
+                # 代码/ticker 命中：精确匹配优先（忽略港股前导零，如 700/0700/00700 等价），
+                # 再按去零后代码长度（短=正股，长多为窝轮/牛熊证）。
+                tdig = tu.replace(".HK", "")
+                qn = qu.lstrip("0")
+                exact = qu in (cu, tu) or (qn != "" and (qn == cu.lstrip("0") or qn == tdig.lstrip("0")))
+                code_hits.append((0 if exact else 1, len(cu.lstrip("0")) or len(cu), name, tk))
             elif ql in name.lower():
                 # 名称命中：前缀匹配优先，再按名称长度（短名常是正股，如「苹果」> 苹果概念ETF）
                 name_hits.append((0 if name.lower().startswith(ql) else 1, len(name), name, tk))
@@ -347,7 +353,11 @@ def _yf_quotes(tickers: list[str]) -> dict:
 def quotes(items: list[dict]) -> dict:
     """items: [{ticker, market}] -> {ticker: {price, chg, name}}。
     A股走 eastmoney（实时，失败回退 yfinance），其余走 yfinance。"""
-    cn = [it["ticker"] for it in items if it.get("market") == CN or cn_code(it.get("ticker", ""))]
+    # 尊重显式 market；只有 market 未给时才靠 cn_code 兜底判 A股，
+    # 否则 6 位数字的非 A股代码会被误路由到 eastmoney 拿到错/空价。
+    cn = [it["ticker"] for it in items
+          if it.get("market") == CN
+          or (it.get("market") in (None, "") and cn_code(it.get("ticker", "")))]
     other = [it["ticker"] for it in items if it["ticker"] not in cn]
     out = {}
     out.update(_cn_quotes(cn))

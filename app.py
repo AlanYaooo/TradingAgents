@@ -553,25 +553,36 @@ _ACTIONS = [("BUY", "buy", ["buy", "买入", "增持", "看多", "overweight", "
             ("HOLD", "hold", ["hold", "持有", "观望", "中性", "neutral", "equal-weight"])]
 
 # 裁决词 -> 动作。注意 overweight/超配=增持=BUY，underweight/低配=减仓=SELL（常被误解为相反）。
+# 不收 long/short：它们是 long-term/short-term 的前缀，前缀匹配会把"短期…我们看多"判反（与
+# "买入看跌期权"同类的判读 bug）。英文一律精确匹配，中文裁决词才用前缀匹配（区分度高、无歧义）。
 _VERDICT = {
-    "buy": "BUY", "买入": "BUY", "增持": "BUY", "看多": "BUY", "overweight": "BUY",
-    "超配": "BUY", "outperform": "BUY", "accumulate": "BUY", "long": "BUY", "bullish": "BUY",
-    "sell": "SELL", "卖出": "SELL", "减持": "SELL", "看空": "SELL", "underweight": "SELL",
-    "低配": "SELL", "underperform": "SELL", "reduce": "SELL", "short": "SELL", "bearish": "SELL",
+    "buy": "BUY", "买入": "BUY", "增持": "BUY", "加仓": "BUY", "建仓": "BUY", "满仓": "BUY",
+    "看多": "BUY", "逢低": "BUY", "overweight": "BUY", "超配": "BUY", "outperform": "BUY",
+    "accumulate": "BUY", "bullish": "BUY",
+    "sell": "SELL", "卖出": "SELL", "减持": "SELL", "减仓": "SELL", "清仓": "SELL", "空仓": "SELL",
+    "止损": "SELL", "看空": "SELL", "underweight": "SELL", "低配": "SELL", "underperform": "SELL",
+    "reduce": "SELL", "bearish": "SELL",
     "hold": "HOLD", "持有": "HOLD", "观望": "HOLD", "中性": "HOLD", "neutral": "HOLD",
     "equal-weight": "HOLD", "equalweight": "HOLD", "maintain": "HOLD", "market-perform": "HOLD",
 }
+_CJK_VERDICT = {k: v for k, v in _VERDICT.items() if any(c >= "一" for c in k)}
 
 
 def _word_to_action(w: str):
     w = (w or "").strip().strip("：:*。.，, ").lower()
     if not w:
         return None
-    if w in _VERDICT:
+    if w in _VERDICT:  # 整词精确（含 equal-weight 这类带连字符的）
         lab = _VERDICT[w]
         return lab, lab.lower()
-    for key, lab in _VERDICT.items():
-        if w.startswith(key):
+    head = w.split("-", 1)[0]  # 英文带连字符取首段精确（short-term 的 'short' 已不在表中，不会误判）
+    if head != w and head in _VERDICT:
+        lab = _VERDICT[head]
+        return lab, lab.lower()
+    # 中文裁决词：在(短的)首词/标记词里做子串匹配（'建议加仓至80%'→加仓）。只扫这个短 token，
+    # 不扫全文，所以不会重蹈"买入看跌期权"那种全文误命中。
+    for key, lab in _CJK_VERDICT.items():
+        if key in w:
             return lab, lab.lower()
     return None
 
@@ -907,7 +918,7 @@ def render_quotes_table(market: str) -> None:
         if chg is None:
             c[2].markdown("<span style='color:var(--faint)'>—</span>", unsafe_allow_html=True)
         else:
-            col = "var(--green)" if chg >= 0 else "var(--red)"
+            col = "var(--red)" if chg >= 0 else "var(--green)"  # 红涨绿跌（与详情页/报告一致）
             c[2].markdown(f"<div style='color:{col};font-weight:700;font-family:JetBrains Mono'>"
                           f"{chg:+.2f}%</div>", unsafe_allow_html=True)
         c[3].button("📈 查看", key=f"an_{market}_{t}", use_container_width=True,
@@ -1023,7 +1034,8 @@ def _history_report_html(hid: str):
     if not (state and (state.get("final_trade_decision") or "").strip()):
         return None
     safe = re.sub(r"[^0-9A-Za-z_-]", "_", str(cfg.get("ticker") or item.get("ticker") or "report")) or "report"
-    fname = f"{safe}_{cfg.get('date_str') or item.get('date_str', '')}_report.html"
+    # 带上唯一 hid，避免同票同日的多次分析撞文件名、导出到别次的报告
+    fname = f"{safe}_{cfg.get('date_str') or item.get('date_str', '')}_{hid}_report.html"
     return fname, build_report_html(state, cfg)
 
 
@@ -1194,27 +1206,29 @@ st.markdown(
     '<span class="tag">风控评估</span><span class="tag">组合经理决策</span></div>',
     unsafe_allow_html=True)
 
-# 顶部导航：行情（打开默认）/ 智能分析
+# dev 预览：?demo=1 加载最近一次已完成的 run（须在 nav_page 控件实例化前设置 widget 状态，
+# 否则页面内容与导航控件不同步）
+if st.query_params.get("demo") and "result" not in st.session_state:
+    import glob
+    _files = sorted(glob.glob(os.path.join(_HERE, ".uiruns", "*progress*.json")))
+    for _fp in reversed(_files):
+        try:
+            _d = json.load(open(_fp, encoding="utf-8"))
+            if _d.get("status") == "done" and (_d.get("final_trade_decision") or "").strip():
+                st.session_state["result"] = {"state": _d,
+                    "cfg": {"ticker": "BTC-USD", "date_str": "2026-06-23", "market": "₿ 虚拟币"}}
+                st.session_state["nav_page"] = NAV_ANALYSIS
+                break
+        except Exception:  # noqa: BLE001
+            pass
+
+# 顶部导航：行情（打开默认）/ 智能分析 / 历史
 do_run = bool(run) or bool(st.session_state.get("start_run"))
 if do_run:
     st.session_state["nav_page"] = NAV_ANALYSIS  # 开始分析 -> 切到分析页
 page = st.segmented_control("页面", [NAV_MARKET, NAV_ANALYSIS, NAV_HISTORY], default=NAV_MARKET,
                             key="nav_page", label_visibility="collapsed")
 page = page or NAV_MARKET
-
-# dev 预览：?demo=1 加载最近一次已完成的 run，用于设计调试（无需实跑）
-if st.query_params.get("demo") and "result" not in st.session_state:
-    import glob
-    _files = sorted(glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".uiruns", "*progress*.json")))
-    for _fp in reversed(_files):
-        try:
-            _d = json.load(open(_fp, encoding="utf-8"))
-            if _d.get("status") == "done" and (_d.get("final_trade_decision") or "").strip():
-                st.session_state["result"] = {"state": _d, "cfg": {"ticker": "BTC-USD", "date_str": "2026-06-23"}}
-                page = NAV_ANALYSIS
-                break
-        except Exception:  # noqa: BLE001
-            pass
 
 
 def _empty_state():
@@ -1286,7 +1300,16 @@ elif do_run:
     status_ph.info(f"🔧 启动分析 · {ui_cfg['ticker']} @ {ui_cfg['date_str']} · {provider}/{deep_model}")
     phs = _placeholders()
 
+    # 启动前先终止上一次可能仍在运行的 worker：rerun / 切页会丢弃下面的轮询循环，
+    # 但子进程会继续跑成孤儿。存句柄到 session_state，下次启动时回收。
+    _prev = st.session_state.get("worker")
+    if _prev is not None and _prev.poll() is None:
+        try:
+            _prev.terminate()
+        except Exception:  # noqa: BLE001
+            pass
     proc = subprocess.Popen([sys.executable, os.path.join(here, "ui_worker.py"), cfg_path, progress_path], cwd=here)
+    st.session_state["worker"] = proc
 
     def _read():
         try:
@@ -1327,11 +1350,11 @@ elif do_run:
             render_report_download(state, ui_cfg)
 
 elif st.session_state.get("result"):
-    res = st.session_state["result"]; state = res["state"]; cfg = res["cfg"]
+    res = st.session_state["result"]; state = res["state"]; cfg = res.get("cfg", {})
     label, _ = _decision_action(state.get("final_trade_decision") or "")
     st.markdown(
-        f'<div class="card soft">最近一次分析 · <b style="color:var(--text)">{cfg["ticker"]}</b> '
-        f'@ {cfg["date_str"]} · <span class="pill done">{label}</span></div>', unsafe_allow_html=True)
+        f'<div class="card soft">最近一次分析 · <b style="color:var(--text)">{cfg.get("ticker", "")}</b> '
+        f'@ {cfg.get("date_str", "")} · <span class="pill done">{label}</span></div>', unsafe_allow_html=True)
     st.markdown('<div class="sec-title">分析流程</div>', unsafe_allow_html=True)
     render_stepper(state, running=False)
     render_kpis(state, None)

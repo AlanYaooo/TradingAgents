@@ -855,6 +855,19 @@ def render_detail_page(focus: dict) -> None:
 _DEC_COLOR = {"buy": "var(--green)", "sell": "var(--red)", "hold": "var(--amber)"}
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def _history_report_datauri(hid: str):
+    """构建该次分析的报告下载（data-URI），按 hid 缓存避免重复生成。"""
+    item = load_history_item(hid)
+    state, cfg = item.get("state"), item.get("cfg", {})
+    if not (state and (state.get("final_trade_decision") or "").strip()):
+        return None
+    safe = re.sub(r"[^0-9A-Za-z_-]", "_", str(cfg.get("ticker") or item.get("ticker") or "report")) or "report"
+    fname = f"{safe}_{cfg.get('date_str') or item.get('date_str', '')}_report.html"
+    b64 = base64.b64encode(build_report_html(state, cfg).encode("utf-8")).decode()
+    return fname, f"data:text/html;charset=utf-8;base64,{b64}"
+
+
 def render_history_page() -> None:
     st.markdown('<div class="sec-title">📜 历史分析记录</div>', unsafe_allow_html=True)
     items = load_history_index()
@@ -867,7 +880,7 @@ def render_history_page() -> None:
         col = _DEC_COLOR.get(it.get("decision_cls"), "var(--faint)")
         dec = it.get("decision") or "—"
         with st.container(border=True):
-            c = st.columns([1.1, 4.4, 1, 1.1], vertical_alignment="center")
+            c = st.columns([1.0, 3.4, 0.95, 0.95, 0.95], vertical_alignment="center")
             c[0].markdown(
                 f'<div style="text-align:center;font-weight:800;color:{col};border:1px solid {col};'
                 f'border-radius:9px;padding:5px 0;font-size:.95rem">{dec}</div>', unsafe_allow_html=True)
@@ -876,9 +889,20 @@ def render_history_page() -> None:
                 f"<div style='color:var(--faint);font-size:.76rem;font-family:JetBrains Mono'>"
                 f"{it.get('ticker')} · 分析日 {it.get('date_str')} · 跑于 {it.get('ts')}</div>",
                 unsafe_allow_html=True)
-            c[2].button("查看", key=f"hv_{it['id']}", use_container_width=True,
+            c[2].button("👁️ 查看", key=f"hv_{it['id']}", use_container_width=True,
                         on_click=_view_history, args=(it["id"],))
-            c[3].button("🗑️ 删除", key=f"hd_{it['id']}", use_container_width=True,
+            _link = _history_report_datauri(it["id"])
+            if _link:
+                _fn, _uri = _link
+                c[3].markdown(
+                    f'<a href="{_uri}" download="{_fn}" title="下载 {_fn}" '
+                    'style="display:block;text-align:center;padding:7px 0;border-radius:10px;'
+                    'border:1px solid var(--border);background:var(--panel2);color:var(--text);'
+                    'text-decoration:none;font-size:.84rem;font-weight:600">📥 导出</a>',
+                    unsafe_allow_html=True)
+            else:
+                c[3].caption("—")
+            c[4].button("🗑️ 删除", key=f"hd_{it['id']}", use_container_width=True,
                         on_click=_del_history, args=(it["id"],))
 
 

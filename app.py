@@ -571,9 +571,21 @@ def _quotes_cached(tickers: tuple, market: str) -> dict:
     return ui_data.quotes([{"ticker": t, "market": market} for t in tickers])
 
 
-@st.cache_data(ttl=21600, show_spinner="📥 正在加载 A 股名单（首次约 20 秒，之后秒开）…")
-def _warm_cn_list() -> list:
-    return ui_data.cn_stock_list()
+_LIST_SPINNER = {
+    "🇨🇳 A股": "📥 正在加载 A 股名单（首次约 20 秒，之后秒开）…",
+    "🇭🇰 港股": "📥 正在加载港股名单（首次约 15 秒，之后秒开）…",
+    "🇺🇸 美股": "📥 正在加载美股名单（首次约 30~40 秒，之后秒开）…",
+}
+
+
+def _warm_list(market: str) -> None:
+    """确保该市场名称全表已加载（首次带 spinner；今天已缓存则瞬回）。"""
+    if market not in _LIST_SPINNER:
+        return
+    if ui_data._read_list(market).get("day") == time.strftime("%Y%m%d"):
+        return  # 今天已缓存，search / resolve_name 直接读缓存
+    with st.spinner(_LIST_SPINNER[market]):
+        ui_data.instrument_list(market)
 
 
 def _fmt_price(p) -> str:
@@ -584,7 +596,7 @@ def _fmt_price(p) -> str:
 
 def render_quotes_table(market: str) -> None:
     if market == "🇨🇳 A股":
-        _warm_cn_list()
+        _warm_list(market)
     wl = [e for e in load_watchlist() if e.get("market") == market]
     names = {e["ticker"]: e.get("name") for e in wl}
     tickers: list[str] = []
@@ -651,9 +663,10 @@ with st.sidebar:
         st.session_state["ticker"] = mkt["examples"][0]
     # 名称 / 代码搜索：输入即出最匹配的几只，点选即填
     if market_name == "🇨🇳 A股":
-        _warm_cn_list()
-    _q = st.text_input("🔎 搜名称 / 代码", key="search_q", placeholder="如 茅台 / 600519 / NVDA")
+        _warm_list(market_name)  # A股：进入即预热（当前标的也要显示中文名）
+    _q = st.text_input("🔎 搜名称 / 代码", key="search_q", placeholder="如 茅台 / 智谱 / 2513 / NVDA")
     if (_q or "").strip():
+        _warm_list(market_name)  # 港股/美股：搜索时才加载其全表（带 spinner）
         _matches = ui_data.search(_q.strip(), market_name, n=8)
         if _matches:
             for _m in _matches:

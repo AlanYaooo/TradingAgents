@@ -56,34 +56,34 @@ except ImportError:
 # ===========================================================================
 # 主题
 # ===========================================================================
+# 设计系统：BI/数据密集型 dashboard，深色 slate 为主，单一品牌强调色，克制装饰。
+# 配色收敛、对比达 WCAG AA；红涨绿跌（面向中国市场）。
 THEMES = {
     "dark": dict(
-        bg="#0B1220", panel="#121E38", panel2="#18233D", soft="#0F1A30",
-        border="#243352", border_soft="#1C2A47",
-        text="#E8EEF8", muted="#93A1BC", faint="#6B7A99",
-        brand="#7C6CFF", brand2="#4F8DFD", cyan="#34D3EE",
-        green="#22C55E", red="#F0506E", amber="#F6A723",
-        sidebar="#0C1730",
-        app_bg="radial-gradient(1100px 560px at 12% -8%, rgba(124,108,255,.16), transparent 60%),"
-               "radial-gradient(900px 520px at 96% 2%, rgba(52,211,238,.10), transparent 55%), #0B1220",
-        hero_grad="linear-gradient(125deg,#16223f 0%,#111c34 55%,#0e1830 100%)",
-        dec_grad="linear-gradient(125deg,#16223f,#0f1a30)",
-        h1_grad="linear-gradient(90deg,#fff,#bfd0ff 60%,#9fe9f5)",
-        shadow="0 10px 30px -16px rgba(0,0,0,.6)",
+        bg="#0A0E17", panel="#111722", panel2="#19212F", soft="#0E141F",
+        border="#232C3B", border_soft="#1A222F",
+        text="#E9EEF7", muted="#9CACC4", faint="#62718A",
+        brand="#7C6CFF", brand2="#5B8DEF", cyan="#2DD4BF",
+        green="#27C281", red="#F6526B", amber="#E8973A",
+        sidebar="#0C121C",
+        app_bg="radial-gradient(900px 480px at 88% -10%, rgba(124,108,255,.10), transparent 60%), #0A0E17",
+        hero_grad="linear-gradient(120deg,#141b2a,#10151f)",
+        dec_grad="linear-gradient(120deg,#141b2a,#10151f)",
+        h1_grad="linear-gradient(90deg,#fff,#cdd6ff)",
+        shadow="0 8px 24px -16px rgba(0,0,0,.55)",
     ),
     "light": dict(
-        bg="#F3F6FC", panel="#FFFFFF", panel2="#EEF2FB", soft="#F8FAFE",
-        border="#E0E7F2", border_soft="#EAEFF8",
-        text="#16213C", muted="#56627B", faint="#687490",  # 调深达 ~4.5:1 对比 (WCAG)
-        brand="#6A5BFF", brand2="#3F7DF0", cyan="#0E9FC4",
-        green="#16A34A", red="#DC2C56", amber="#C77508",
-        sidebar="#EFF3FB",
-        app_bg="radial-gradient(1100px 560px at 12% -8%, rgba(124,108,255,.10), transparent 60%),"
-               "radial-gradient(900px 520px at 96% 2%, rgba(52,211,238,.07), transparent 55%), #F3F6FC",
-        hero_grad="linear-gradient(125deg,#eaf0fe 0%,#e6edfb 55%,#f3f7ff 100%)",
-        dec_grad="linear-gradient(125deg,#eaf0fe,#f3f7ff)",
-        h1_grad="linear-gradient(90deg,#1b2552,#3a4fa6 55%,#0e7490)",
-        shadow="0 10px 28px -18px rgba(40,60,110,.35)",
+        bg="#F4F6FB", panel="#FFFFFF", panel2="#F0F3F9", soft="#F8FAFD",
+        border="#E3E8F0", border_soft="#EDF0F6",
+        text="#141B2D", muted="#566075", faint="#6A7589",  # AA 对比
+        brand="#6A5BFF", brand2="#3F7DF0", cyan="#0E9FB4",
+        green="#15A66E", red="#E03A56", amber="#C2790C",
+        sidebar="#F0F3F9",
+        app_bg="radial-gradient(900px 480px at 88% -10%, rgba(124,108,255,.06), transparent 60%), #F4F6FB",
+        hero_grad="linear-gradient(120deg,#f3f6fd,#fbfcff)",
+        dec_grad="linear-gradient(120deg,#f3f6fd,#fbfcff)",
+        h1_grad="linear-gradient(90deg,#1a2240,#3a4fa6)",
+        shadow="0 6px 20px -14px rgba(40,55,95,.28)",
     ),
 }
 
@@ -122,16 +122,14 @@ div[data-testid="stVerticalBlockBorderWrapper"]{ background:var(--panel) !import
 [data-testid="stExpander"]{ border:1px solid var(--border) !important; border-radius:12px !important; background:var(--soft) !important; }
 [data-testid="stExpander"] summary{ color:var(--text) !important; }
 
-.hero{ border:1px solid var(--border); border-radius:20px; padding:24px 30px; margin-bottom:18px; background:var(--hero-grad); position:relative; overflow:hidden; }
-.hero::after{ content:""; position:absolute; right:-60px; top:-60px; width:240px; height:240px; background:radial-gradient(circle,rgba(124,108,255,.32),transparent 70%); }
-.hero .brandrow{ display:flex; align-items:center; gap:14px; }
-.hero .logo{ width:46px; height:46px; border-radius:13px; display:flex; align-items:center; justify-content:center; flex:0 0 auto;
-  background:linear-gradient(135deg,var(--brand),var(--brand2)); box-shadow:0 10px 24px -8px rgba(124,108,255,.75); }
-.hero h1{ font-size:1.8rem; font-weight:800; margin:0; letter-spacing:.01em; background:var(--h1-grad); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
-.hero .en{ font-size:.82rem; color:var(--faint); font-weight:600; letter-spacing:.18em; }
-.hero p{ color:var(--muted); margin:.55rem 0 0; font-size:.95rem; }
-.hero .tag{ display:inline-block; margin-top:12px; padding:4px 12px; border-radius:999px; font-size:.74rem; font-weight:600;
-  background:rgba(124,108,255,.14); color:var(--brand); border:1px solid rgba(124,108,255,.3); margin-right:8px; }
+/* 纤细应用头栏（取代大 hero，更像专业终端/产品） */
+.apphead{ display:flex; align-items:center; gap:12px; border:1px solid var(--border); border-radius:14px;
+  padding:12px 18px; margin-bottom:14px; background:var(--panel); box-shadow:var(--shadow); }
+.apphead .logo{ width:38px; height:38px; border-radius:11px; display:flex; align-items:center; justify-content:center; flex:0 0 auto;
+  background:linear-gradient(135deg,var(--brand),var(--brand2)); box-shadow:0 6px 16px -9px rgba(124,108,255,.8); }
+.apphead .bn{ font-size:1.16rem; font-weight:800; color:var(--text); letter-spacing:.01em; line-height:1.15; }
+.apphead .bn .en{ font-size:.66rem; color:var(--faint); font-weight:700; letter-spacing:.16em; margin-left:7px; vertical-align:middle; }
+.apphead .bt{ color:var(--muted); font-size:.79rem; margin-top:2px; }
 
 .card{ background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:16px 20px; margin-bottom:14px; box-shadow:var(--shadow); }
 .card.soft{ background:var(--soft); }
@@ -946,8 +944,9 @@ def render_quotes_table(market: str) -> None:
             c[2].markdown("<span style='color:var(--faint)'>—</span>", unsafe_allow_html=True)
         else:
             col = "var(--red)" if chg >= 0 else "var(--green)"  # 红涨绿跌（与详情页/报告一致）
+            arr = "▲" if chg >= 0 else "▼"  # 箭头：不只靠颜色传达涨跌（a11y color-not-only）
             c[2].markdown(f"<div style='color:{col};font-weight:700;font-family:JetBrains Mono'>"
-                          f"{chg:+.2f}%</div>", unsafe_allow_html=True)
+                          f"{arr} {chg:+.2f}%</div>", unsafe_allow_html=True)
         c[3].button("📈 查看", key=f"an_{market}_{t}", use_container_width=True,
                     on_click=_focus, args=(market, t))
 
@@ -1020,9 +1019,10 @@ def render_detail_page(focus: dict) -> None:
         px_html = '<span style="color:var(--faint)">—</span>'
     else:
         cc = "var(--red)" if chg >= 0 else "var(--green)"  # 红涨绿跌
+        arr = "▲" if chg >= 0 else "▼"
         px_html = (f'<span style="font-size:1.7rem;font-weight:800;font-family:JetBrains Mono;color:{cc}">'
                    f'{_fmt_price(price)}</span>'
-                   f'<span style="color:{cc};font-weight:700;margin-left:10px">{chg:+.2f}%</span>')
+                   f'<span style="color:{cc};font-weight:700;margin-left:10px">{arr} {chg:+.2f}%</span>')
     st.markdown(
         f'<div class="card" style="display:flex;align-items:center;justify-content:space-between;'
         f'flex-wrap:wrap;gap:10px;margin-top:10px">'
@@ -1223,14 +1223,12 @@ with _tcols[1]:
         st.rerun()
 
 st.markdown(
-    '<div class="hero"><div class="brandrow"><div class="logo">'
-    '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" '
+    '<div class="apphead"><div class="logo">'
+    '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.3" '
     'stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 6"/>'
     '<polyline points="15 6 21 6 21 12"/></svg></div>'
-    f'<div><h1>{APP_NAME}</h1><div class="en">TRADINGAGENTS</div></div></div>'
-    '<p>多智能体交易分析 · 模拟真实交易公司的分工与协作，逐步推演到最终决策</p>'
-    '<span class="tag">分析师团队</span><span class="tag">多空辩论</span>'
-    '<span class="tag">风控评估</span><span class="tag">组合经理决策</span></div>',
+    f'<div><div class="bn">{APP_NAME}<span class="en">TRADINGAGENTS</span></div>'
+    '<div class="bt">多智能体交易分析 · 实时行情 · 逐 agent 推演到买卖决策</div></div></div>',
     unsafe_allow_html=True)
 
 # dev 预览：?demo=1 加载最近一次已完成的 run（须在 nav_page 控件实例化前设置 widget 状态，

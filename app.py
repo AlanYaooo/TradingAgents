@@ -782,7 +782,6 @@ with st.sidebar:
             st.toast(f"已加入自选：{_cur_name or ticker}")
         st.rerun()
     st.caption(f"📡 {mkt['data']}")
-    trade_date = st.date_input("分析日期", value=date(2026, 6, 23))
 
     # ⭐ 自选库（可折叠，默认收起；显示名称）
     _wl = load_watchlist()
@@ -827,6 +826,11 @@ with st.sidebar:
     debate_rounds = rc[0].slider("多空轮数", 1, 3, 1)
     risk_rounds = rc[1].slider("风控轮数", 1, 3, 1)
     analysts_sel = st.multiselect("分析师", [a[0] for a in ANALYSTS], default=[a[0] for a in ANALYSTS])
+    # 分析基准日：默认今天（用最新数据）。仅回测历史某天才需要改 -> 收进折叠项。
+    with st.expander("🗓️ 分析基准日 · 默认最新", expanded=False):
+        st.caption("默认用最新数据分析；仅当你想回测历史某一天时才需要在此修改。")
+        trade_date = st.date_input("基准日", value=date.today(), max_value=date.today(),
+                                   label_visibility="collapsed")
 
     run = st.button("🚀 开始分析", type="primary", use_container_width=True)
     if st.session_state.get("result") and st.button("🗑️ 清除结果", use_container_width=True):

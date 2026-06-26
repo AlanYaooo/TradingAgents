@@ -237,6 +237,52 @@ ANALYSTS = [
     ("基本面分析师", "📑", "fundamentals_report", "fundamentals"),
 ]
 
+# ⭐ 自选库：持久化到 ~/.tradingagents/watchlist.json（重启/重开都在）
+WATCHLIST_PATH = os.path.join(os.path.expanduser("~"), ".tradingagents", "watchlist.json")
+
+
+def load_watchlist() -> list:
+    try:
+        with open(WATCHLIST_PATH, encoding="utf-8") as f:
+            wl = json.load(f)
+        return [e for e in wl if isinstance(e, dict) and e.get("ticker")]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def save_watchlist(wl: list) -> None:
+    try:
+        os.makedirs(os.path.dirname(WATCHLIST_PATH), exist_ok=True)
+        with open(WATCHLIST_PATH, "w", encoding="utf-8") as f:
+            json.dump(wl, f, ensure_ascii=False, indent=2)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def add_to_watchlist(ticker: str, market: str) -> bool:
+    ticker = (ticker or "").strip()
+    if not ticker:
+        return False
+    wl = load_watchlist()
+    if any(e["ticker"] == ticker and e.get("market") == market for e in wl):
+        return False
+    wl.append({"ticker": ticker, "market": market})
+    save_watchlist(wl)
+    return True
+
+
+def remove_from_watchlist(ticker: str, market: str) -> None:
+    save_watchlist([e for e in load_watchlist()
+                    if not (e["ticker"] == ticker and e.get("market") == market)])
+
+
+def _select_watchlist(market: str, ticker: str) -> None:
+    # 在 on_click 回调里改 widget state 才合法（内联改 selectbox key 会抛异常）
+    if market in MARKETS:
+        st.session_state["market_sel"] = market
+        st.session_state["_mkt"] = market
+    st.session_state["ticker"] = ticker
+
 
 # ===========================================================================
 # 渲染辅助
@@ -504,7 +550,7 @@ def build_report_html(state: dict, cfg: dict) -> str:
 # ===========================================================================
 with st.sidebar:
     st.markdown("### 🎯 分析对象")
-    market_name = st.selectbox("市场 / 资产", list(MARKETS.keys()), label_visibility="collapsed")
+    market_name = st.selectbox("市场 / 资产", list(MARKETS.keys()), key="market_sel", label_visibility="collapsed")
     mkt = MARKETS[market_name]
     if st.session_state.get("_mkt") != market_name:
         st.session_state["_mkt"] = market_name
@@ -515,8 +561,27 @@ with st.sidebar:
         if c.button(ex, key=f"ex_{ex}", use_container_width=True):
             st.session_state["ticker"] = ex
             st.rerun()
+    if st.button("⭐ 加入自选库", use_container_width=True):
+        if add_to_watchlist(ticker, market_name):
+            st.toast(f"已加入自选：{ticker}")
+        st.rerun()
     st.caption(f"📡 {mkt['data']}")
     trade_date = st.date_input("分析日期", value=date(2026, 6, 23))
+
+    # ⭐ 自选库
+    st.markdown("### ⭐ 自选库")
+    _wl = load_watchlist()
+    if not _wl:
+        st.caption("还没有自选标的。填好代码后点上面「⭐ 加入自选库」。")
+    for _e in _wl:
+        _mk = _e.get("market", market_name)
+        _flag = (_mk or "").split(" ")[0]
+        wc1, wc2 = st.columns([5, 1])
+        wc1.button(f"{_flag} {_e['ticker']}", key=f"wl_{_mk}_{_e['ticker']}", use_container_width=True,
+                   on_click=_select_watchlist, args=(_mk, _e["ticker"]))
+        if wc2.button("✕", key=f"wldel_{_mk}_{_e['ticker']}", use_container_width=True):
+            remove_from_watchlist(_e["ticker"], _mk)
+            st.rerun()
 
     st.markdown("### 🔌 LLM / API Key")
     prov_name = st.selectbox("Provider", list(PROVIDERS.keys()))

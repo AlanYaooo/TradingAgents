@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -603,6 +604,23 @@ def build_report_html(state: dict, cfg: dict) -> str:
     )
 
 
+def render_report_download(state: dict, cfg: dict) -> None:
+    """用 data-URI 的 <a download> 下载，强制带 .html 文件名。
+    （st.download_button 在某些 Chrome 上会存成无扩展名的 UUID 文件，双击打不开。）"""
+    html_str = build_report_html(state, cfg)
+    safe = re.sub(r"[^0-9A-Za-z_-]", "_", str(cfg.get("ticker", "report"))) or "report"
+    fname = f"{safe}_{cfg.get('date_str', '')}_report.html"
+    b64 = base64.b64encode(html_str.encode("utf-8")).decode()
+    st.markdown(
+        f'<a href="data:text/html;charset=utf-8;base64,{b64}" download="{fname}" '
+        'style="display:inline-block;margin-top:8px;padding:11px 20px;border-radius:11px;'
+        'font-weight:700;letter-spacing:.02em;color:#fff;text-decoration:none;'
+        'background:linear-gradient(120deg,var(--brand),var(--brand2));'
+        'box-shadow:0 8px 24px -8px rgba(124,108,255,.6)">'
+        f'⬇️ 下载完整报告（{fname}）</a>',
+        unsafe_allow_html=True)
+
+
 # ===========================================================================
 # 行情页（打开先看到的页面）
 # ===========================================================================
@@ -1022,9 +1040,7 @@ elif do_run:
         status_ph.success(f"✅ 分析完成 · 用时 {int((time.time()-t0)//60)} 分 {int((time.time()-t0)%60)} 秒")
         st.session_state["result"] = {"state": state, "cfg": ui_cfg}
         if state.get("final_trade_decision"):
-            st.download_button("⬇️ 下载完整报告 (HTML，浏览器打开)", build_report_html(state, ui_cfg),
-                               file_name=f"{ui_cfg['ticker']}_{ui_cfg['date_str']}_report.html",
-                               mime="text/html")
+            render_report_download(state, ui_cfg)
 
 elif st.session_state.get("result"):
     res = st.session_state["result"]; state = res["state"]; cfg = res["cfg"]
@@ -1038,8 +1054,7 @@ elif st.session_state.get("result"):
     phs = _placeholders()
     render_pipeline(state, phs, running=False, any_started=True)
     if state.get("final_trade_decision"):
-        st.download_button("⬇️ 下载完整报告 (HTML，浏览器打开)", build_report_html(state, cfg),
-                           file_name=f"{cfg['ticker']}_{cfg['date_str']}_report.html", mime="text/html")
+        render_report_download(state, cfg)
 
 else:
     _empty_state()

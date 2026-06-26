@@ -182,6 +182,27 @@ hr{ border-color:var(--border-soft); }
 [data-testid="stButtonGroup"] button[kind="segmented_controlActive"]{
   background:rgba(124,108,255,.15) !important; color:var(--brand) !important; border:1px solid var(--brand) !important; }
 
+/* 侧栏分区：标题间加分隔线 + 更大间距，层级更清晰 */
+section[data-testid="stSidebar"] h3{ margin-top:1.3rem !important; padding-top:.75rem; border-top:1px solid var(--border-soft); }
+/* 流程页：决策卡更克制、徽章规整 */
+.decision{ background:var(--soft); border-radius:14px; }
+.dbadge{ font-size:1.65rem; padding:9px 24px; }
+/* 阶段卡标题图标统一尺寸 */
+.ahead .ic{ width:32px; height:32px; font-size:1rem; background:rgba(124,108,255,.12); }
+.sec-title{ margin:16px 2px 8px; }
+
+/* 行情表：BI 数据表行（hover 高亮、对齐、等宽数字） */
+.qhead, .qrow{ display:grid; grid-template-columns:1fr 112px 120px; align-items:center; gap:8px; }
+.qhead{ color:var(--faint); font-size:.72rem; font-weight:700; letter-spacing:.05em; padding:2px 10px 7px; }
+.qhead span:nth-child(2), .qhead span:nth-child(3){ text-align:right; }
+.qrow{ padding:8px 10px; border-radius:9px; border-bottom:1px solid var(--border-soft); transition:background .12s; }
+.qrow:hover{ background:var(--panel2); }
+.qname{ font-weight:700; color:var(--text); display:flex; align-items:center; gap:7px; min-width:0; }
+.qname .qcode{ color:var(--faint); font-size:.73rem; font-family:'JetBrains Mono',monospace; font-weight:500; }
+.qname .qstar{ color:var(--amber); flex:0 0 auto; }
+.qprice, .qchg{ text-align:right; font-family:'JetBrains Mono',monospace; font-weight:700; font-variant-numeric:tabular-nums; }
+.qprice{ font-size:1.0rem; color:var(--text); }
+
 /* —— UI/UX 质量基线（ui-ux-pro-max：accessibility / 数字对齐 / 动效） —— */
 /* 数字等宽对齐：价格/涨跌/KPI 列不再左右跳动（number-tabular） */
 code, pre, [data-testid="stMetricValue"], .chip .v, .dbadge,
@@ -812,7 +833,32 @@ def build_report_html(state: dict, cfg: dict) -> str:
                  f'<span>📈 {name or ticker} · 近 6 月走势（日线 · 红涨绿跌）</span>'
                  f'<span>最新 <b>{last:.2f}</b> · 区间 <b style="color:{cc}">{chg:+.2f}%</b></span>'
                  f'</div>{_svg_candles(kl)}</div>')
-    intro = f'<h2 style="margin-top:20px">决策概览</h2>{flow}{chart}'
+    # KPI 卡片：决策 / 现价·区间 / 目标价 / 时间跨度（从决策文本提取），让报告可一眼扫读
+    fd_text = state.get("final_trade_decision") or ""
+
+    def _grab(pats):
+        for p in pats:
+            m = re.search(p, fd_text, re.I)
+            if m:
+                return m.group(1).strip()
+        return ""
+
+    target = _grab([r"price\s*target[*\s]*[:：][*\s]*([0-9][0-9.,]*)",
+                    r"目标价[位]?[*\s]*[:：]?[*\s]*([0-9][0-9.,]*)"])
+    horizon = _grab([r"time\s*horizon[*\s]*[:：][*\s]*([^\n*]{1,16})",
+                     r"时间(?:跨度|区间|周期|框架)[*\s]*[:：]?[*\s]*([^\n*]{1,16})"])
+    dcolor = {"buy": "#16a34a", "sell": "#dc2626", "hold": "#d97706"}.get(cls, "#64748b")
+    cards = f'<div class="cards"><div class="kc"><div class="k">决策</div>' \
+            f'<div class="v" style="color:{dcolor}">{label}</div></div>'
+    if kl:
+        cards += (f'<div class="kc"><div class="k">最新价 · 区间</div><div class="v">{last:.2f} '
+                  f'<span style="font-size:.82rem;color:{cc}">{chg:+.1f}%</span></div></div>')
+    if target:
+        cards += f'<div class="kc"><div class="k">目标价</div><div class="v">{target}</div></div>'
+    if horizon:
+        cards += f'<div class="kc"><div class="k">时间跨度</div><div class="v" style="font-size:.95rem">{horizon}</div></div>'
+    cards += "</div>"
+    intro = f'<h2 style="margin-top:20px">决策概览</h2>{cards}{flow}{chart}'
 
     return (
         '<!doctype html><html lang="zh"><head><meta charset="utf-8">'
@@ -924,30 +970,26 @@ def render_quotes_table(market: str) -> None:
         st.caption("暂无标的，去左侧搜索后「⭐ 加入自选」。")
         return
     qd = _quotes_cached(tuple(tickers), market)
-    h = st.columns([5, 2, 2, 2], vertical_alignment="center")
-    for col, lbl in zip(h, ["名称 / 代码", "最新价", "涨跌幅", ""], strict=False):
-        col.markdown(f"<span style='color:var(--faint);font-size:.72rem;font-weight:700;"
-                     f"letter-spacing:.05em'>{lbl}</span>", unsafe_allow_html=True)
+    st.markdown('<div class="qhead"><span>名称 / 代码</span><span>最新价</span><span>涨跌幅</span></div>',
+                unsafe_allow_html=True)
     for t in tickers:
         q = qd.get(t) or {}
         name = names.get(t) or ui_data.resolve_name(t, market)
         price, chg = q.get("price"), q.get("chg")
-        star = "⭐ " if t in names else ""
-        c = st.columns([5, 2, 2, 2], vertical_alignment="center")
-        c[0].markdown(
-            f"<div style='font-weight:700'>{star}{name}</div>"
-            f"<div style='color:var(--faint);font-size:.74rem;font-family:JetBrains Mono'>{t}</div>",
-            unsafe_allow_html=True)
-        c[1].markdown(f"<div style='font-family:JetBrains Mono;font-size:1.0rem'>{_fmt_price(price)}</div>",
-                      unsafe_allow_html=True)
+        star = '<span class="qstar">★</span>' if t in names else ""
         if chg is None:
-            c[2].markdown("<span style='color:var(--faint)'>—</span>", unsafe_allow_html=True)
+            chg_html = '<span style="color:var(--faint)">—</span>'
         else:
-            col = "var(--red)" if chg >= 0 else "var(--green)"  # 红涨绿跌（与详情页/报告一致）
-            arr = "▲" if chg >= 0 else "▼"  # 箭头：不只靠颜色传达涨跌（a11y color-not-only）
-            c[2].markdown(f"<div style='color:{col};font-weight:700;font-family:JetBrains Mono'>"
-                          f"{arr} {chg:+.2f}%</div>", unsafe_allow_html=True)
-        c[3].button("📈 查看", key=f"an_{market}_{t}", use_container_width=True,
+            col = "var(--red)" if chg >= 0 else "var(--green)"  # 红涨绿跌
+            arr = "▲" if chg >= 0 else "▼"  # 箭头：不只靠颜色传达（a11y color-not-only）
+            chg_html = f'<span style="color:{col}">{arr} {chg:+.2f}%</span>'
+        c = st.columns([8.4, 1.6], vertical_alignment="center")
+        c[0].markdown(
+            f'<div class="qrow"><div class="qname">{star}{name}'
+            f'<span class="qcode">{t}</span></div>'
+            f'<div class="qprice">{_fmt_price(price)}</div>'
+            f'<div class="qchg">{chg_html}</div></div>', unsafe_allow_html=True)
+        c[1].button("查看", key=f"an_{market}_{t}", use_container_width=True,
                     on_click=_focus, args=(market, t))
 
 

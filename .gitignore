@@ -228,3 +228,6 @@ reports/
 /*-ui-*.png
 /ui-*.png
 /page-*.png
+
+# Generated report files (served via Streamlit static serving)
+/static/reports/

@@ -9,7 +9,6 @@
 """
 from __future__ import annotations
 
-import base64
 import json
 import os
 import re
@@ -17,9 +16,9 @@ import subprocess
 import sys
 import time
 from datetime import date, datetime
+from urllib.parse import quote
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 import ui_data  # 名称解析 / 名称搜索 / 实时报价（不依赖 akshare，避免 py_mini_racer 崩）
 
@@ -31,6 +30,7 @@ except ImportError:  # 没装 plotly 时 K 线退化为折线
     make_subplots = None
 
 APP_NAME = "千机智能体"
+_HERE = os.path.dirname(os.path.abspath(__file__))
 
 st.set_page_config(
     page_title=f"{APP_NAME} · 多智能体交易分析",
@@ -763,36 +763,49 @@ def _report_fname(cfg: dict) -> str:
     return f"{safe}_{cfg.get('date_str', '')}_report.html"
 
 
-def _blob_report_actions(html_str: str, fname: str, label: str, *,
-                         primary: bool = True, preview: bool = False, height: int = 58) -> None:
-    """components.html 里跑 JS：把报告做成 blob 再下载。blob: URL 在 Chrome 上会确实
-    带上 download 文件名 —— st.download_button 传的是空名、data: URL 偏大时会丢名变 UUID，
-    两者都不可靠（已被实测 + 源码确认）。组件 iframe sandbox 含 allow-downloads /
-    allow-popups，故下载与「新标签预览」都可用。"""
-    b64 = base64.b64encode(html_str.encode("utf-8")).decode()
-    dl_extra = ("padding:11px 18px;font-size:14px;box-shadow:0 8px 24px -8px rgba(124,108,255,.55)"
-                if primary else "padding:7px 10px;font-size:13px;width:100%")
-    pv = ('<button id="pv" style="margin-left:8px;padding:10px 15px;border:1px solid #9aa6c8;'
-          'border-radius:11px;background:transparent;color:#7C6CFF;cursor:pointer;font-size:13px;'
-          'font-weight:600">🔎 新标签预览</button>') if preview else ""
-    components.html(
-        f'''<div style="font-family:Inter,'Segoe UI',sans-serif;display:flex;align-items:center">
-<button id="dl" style="border:none;border-radius:11px;font-weight:700;color:#fff;cursor:pointer;'''
-        f'''background:linear-gradient(120deg,#7C6CFF,#4F8DFD);{dl_extra}">{label}</button>{pv}</div>
-<script>
-const D="{b64}",N={json.dumps(fname)};
-function burl(){{const s=atob(D),a=new Uint8Array(s.length);for(let i=0;i<s.length;i++)a[i]=s.charCodeAt(i);
- return URL.createObjectURL(new Blob([a],{{type:"text/html;charset=utf-8"}}));}}
-document.getElementById("dl").onclick=function(){{const u=burl(),x=document.createElement("a");
- x.href=u;x.download=N;document.body.appendChild(x);x.click();
- setTimeout(function(){{URL.revokeObjectURL(u);x.remove();}},2000);}};
-var p=document.getElementById("pv");if(p)p.onclick=function(){{window.open(burl(),"_blank");}};
-</script>''', height=height)
+_STATIC_REPORTS = os.path.join(_HERE, "static", "reports")
+
+
+def _publish_report(html_str: str, fname: str) -> str:
+    """把报告写进 Streamlit 静态目录，返回真实同源 URL。
+    这是最稳的下载/查看方式：真实文件 + 真实 URL，没有 JS / iframe / data: / blob，
+    Chrome 一定按 URL 文件名命名，也能直接在新标签打开（彻底避开 UUID 问题）。"""
+    try:
+        os.makedirs(_STATIC_REPORTS, exist_ok=True)
+        # 顺手清掉 7 天前的旧报告，避免无限堆积
+        cutoff = time.time() - 7 * 86400
+        for old in os.listdir(_STATIC_REPORTS):
+            p = os.path.join(_STATIC_REPORTS, old)
+            try:
+                if os.path.getmtime(p) < cutoff:
+                    os.remove(p)
+            except Exception:  # noqa: BLE001
+                pass
+        with open(os.path.join(_STATIC_REPORTS, fname), "w", encoding="utf-8") as f:
+            f.write(html_str)
+        return f"/app/static/reports/{quote(fname)}"
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def render_report_download(state: dict, cfg: dict) -> None:
-    _blob_report_actions(build_report_html(state, cfg), _report_fname(cfg),
-                         "⬇️ 下载完整报告", primary=True, preview=True, height=60)
+    fname = _report_fname(cfg)
+    url = _publish_report(build_report_html(state, cfg), fname)
+    if not url:
+        st.warning("报告生成失败，请重试。")
+        return
+    st.markdown(
+        f'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">'
+        f'<a href="{url}" target="_blank" rel="noopener" '
+        'style="padding:11px 20px;border-radius:11px;font-weight:700;color:#fff;text-decoration:none;'
+        'background:linear-gradient(120deg,var(--brand),var(--brand2));'
+        'box-shadow:0 8px 24px -8px rgba(124,108,255,.55)">📄 查看完整报告（新标签打开）</a>'
+        f'<a href="{url}" download="{fname}" '
+        'style="padding:11px 18px;border-radius:11px;font-weight:700;text-decoration:none;'
+        'border:1px solid var(--border);background:var(--panel2);color:var(--text)">⬇️ 下载 HTML</a>'
+        f'</div><div style="color:var(--faint);font-size:.8rem;margin-top:6px">'
+        f'文件：{fname} · 「查看」直接在浏览器打开；「下载」存到本地。</div>',
+        unsafe_allow_html=True)
 
 
 # ===========================================================================
@@ -1002,9 +1015,14 @@ def render_history_page() -> None:
             c[2].button("👁️ 查看", key=f"hv_{it['id']}", use_container_width=True,
                         on_click=_view_history, args=(it["id"],))
             _rep = _history_report_html(it["id"])
-            if _rep:
-                with c[3]:
-                    _blob_report_actions(_rep[1], _rep[0], "📥 导出", primary=False, height=44)
+            _url = _publish_report(_rep[1], _rep[0]) if _rep else ""
+            if _url:
+                c[3].markdown(
+                    f'<a href="{_url}" download="{_rep[0]}" target="_blank" rel="noopener" '
+                    'style="display:block;text-align:center;padding:7px 0;border-radius:10px;'
+                    'border:1px solid var(--border);background:var(--panel2);color:var(--text);'
+                    'text-decoration:none;font-size:.82rem;font-weight:600">📥 导出</a>',
+                    unsafe_allow_html=True)
             else:
                 c[3].caption("—")
             c[4].button("🗑️ 删除", key=f"hd_{it['id']}", use_container_width=True,

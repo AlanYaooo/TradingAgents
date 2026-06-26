@@ -21,6 +21,13 @@ import streamlit as st
 
 import ui_data  # 名称解析 / 名称搜索 / 实时报价（不依赖 akshare，避免 py_mini_racer 崩）
 
+try:
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+except ImportError:  # 没装 plotly 时 K 线退化为折线
+    go = None
+    make_subplots = None
+
 APP_NAME = "千机智能体"
 
 st.set_page_config(
@@ -288,18 +295,30 @@ def _set_target(market: str, ticker: str) -> None:
     st.session_state["ticker"] = ticker
 
 
-def _select_watchlist(market: str, ticker: str) -> None:
+def _focus(market: str, ticker: str) -> None:
+    """选中某标的 -> 右侧（行情页）展示其 K 线详情。"""
     _set_target(market, ticker)
+    st.session_state["focus"] = {"market": market, "ticker": ticker}
+    st.session_state["nav_page"] = NAV_MARKET
+
+
+def _select_watchlist(market: str, ticker: str) -> None:
+    _focus(market, ticker)  # 点自选股 -> 右侧出 K 线行情
 
 
 def _pick_search(market: str, ticker: str) -> None:
-    _set_target(market, ticker)
+    _focus(market, ticker)  # 搜索选中 -> 右侧出 K 线行情
     st.session_state["search_q"] = ""  # 选中后清空搜索框
 
 
-def _goto_analysis(market: str, ticker: str) -> None:
+def _back_to_list() -> None:
+    st.session_state.pop("focus", None)  # 返回行情列表
+
+
+def _start_analysis(market: str, ticker: str) -> None:
     _set_target(market, ticker)
-    st.session_state["nav_page"] = NAV_ANALYSIS  # 从行情页点「分析」-> 跳到分析页
+    st.session_state["nav_page"] = NAV_ANALYSIS
+    st.session_state["start_run"] = True  # 详情页「开始 AI 分析」-> 直接跑
 
 
 # ===========================================================================
@@ -629,8 +648,8 @@ def render_quotes_table(market: str) -> None:
             col = "var(--green)" if chg >= 0 else "var(--red)"
             c[2].markdown(f"<div style='color:{col};font-weight:700;font-family:JetBrains Mono'>"
                           f"{chg:+.2f}%</div>", unsafe_allow_html=True)
-        c[3].button("🔬 分析", key=f"an_{market}_{t}", use_container_width=True,
-                    on_click=_goto_analysis, args=(market, t))
+        c[3].button("📈 查看", key=f"an_{market}_{t}", use_container_width=True,
+                    on_click=_focus, args=(market, t))
 
 
 def render_market_page() -> None:
@@ -645,7 +664,86 @@ def render_market_page() -> None:
         st.rerun()
     with st.container(border=True):
         render_quotes_table(mname)
-    st.info("点某行的 **🔬 分析** 启动多智能体分析；或在左侧搜名称、用 **⭐ 自选库** 挑选。")
+    st.info("点某行的 **📈 查看** 看 K 线走势并一键分析；或在左侧搜名称 / 用 **⭐ 自选库** 挑选。")
+
+
+# ---- 个股详情：K 线走势 + 一键 AI 分析 -------------------------------------
+@st.cache_data(ttl=300, show_spinner=False)
+def _kline_cached(ticker: str, days: int) -> list:
+    return ui_data.kline(ticker, days)
+
+
+_PERIODS = {"近 1 月": 22, "近 3 月": 66, "近 6 月": 130, "近 1 年": 252}
+
+
+def _kline_figure(rows: list, market: str):
+    t = THEMES.get(theme, THEMES["dark"])
+    up, down = t["red"], t["green"]  # A 股惯例：红涨绿跌
+    grid = t["border_soft"]
+    dates = [r["date"] for r in rows]
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.02,
+                        row_heights=[0.76, 0.24])
+    fig.add_trace(go.Candlestick(
+        x=dates, open=[r["open"] for r in rows], high=[r["high"] for r in rows],
+        low=[r["low"] for r in rows], close=[r["close"] for r in rows],
+        increasing_line_color=up, decreasing_line_color=down,
+        increasing_fillcolor=up, decreasing_fillcolor=down, line_width=1,
+        name="K线", showlegend=False), row=1, col=1)
+    vol_colors = [up if r["close"] >= r["open"] else down for r in rows]
+    fig.add_trace(go.Bar(x=dates, y=[r["volume"] for r in rows], marker_color=vol_colors,
+                         marker_line_width=0, opacity=0.55, showlegend=False, name="量"), row=2, col=1)
+    fig.update_layout(height=440, margin=dict(l=6, r=54, t=6, b=6), dragmode="pan",
+                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      font=dict(color=t["muted"], size=11), hovermode="x unified",
+                      xaxis_rangeslider_visible=False, bargap=0.2)
+    breaks = [] if market == "₿ 虚拟币" else [dict(bounds=["sat", "mon"])]
+    fig.update_xaxes(showgrid=False, rangebreaks=breaks, row=1, col=1)
+    fig.update_xaxes(showgrid=False, rangebreaks=breaks, row=2, col=1)
+    fig.update_yaxes(gridcolor=grid, side="right", row=1, col=1, tickfont=dict(size=10))
+    fig.update_yaxes(showgrid=False, side="right", row=2, col=1, tickfont=dict(size=9))
+    return fig
+
+
+def render_detail_page(focus: dict) -> None:
+    market, ticker = focus["market"], focus["ticker"]
+    name = ui_data.resolve_name(ticker, market)
+    top = st.columns([1.4, 6], vertical_alignment="center")
+    top[0].button("← 行情列表", use_container_width=True, on_click=_back_to_list)
+    # 头部：名称 + 现价 + 涨跌
+    q = (_quotes_cached((ticker,), market) or {}).get(ticker) or {}
+    price, chg = q.get("price"), q.get("chg")
+    flag = market.split(" ")[0]
+    if chg is None:
+        px_html = '<span style="color:var(--faint)">—</span>'
+    else:
+        cc = "var(--red)" if chg >= 0 else "var(--green)"  # 红涨绿跌
+        px_html = (f'<span style="font-size:1.7rem;font-weight:800;font-family:JetBrains Mono;color:{cc}">'
+                   f'{_fmt_price(price)}</span>'
+                   f'<span style="color:{cc};font-weight:700;margin-left:10px">{chg:+.2f}%</span>')
+    st.markdown(
+        f'<div class="card" style="display:flex;align-items:center;justify-content:space-between;'
+        f'flex-wrap:wrap;gap:10px;margin-top:10px">'
+        f'<div><div style="font-size:1.35rem;font-weight:800">{flag} {name}</div>'
+        f'<div style="color:var(--faint);font-family:JetBrains Mono;font-size:.85rem">{ticker}</div></div>'
+        f'<div style="text-align:right">{px_html}</div></div>', unsafe_allow_html=True)
+    # 周期 + K 线
+    per = st.segmented_control("周期", list(_PERIODS.keys()), default="近 3 月",
+                               key="kline_period", label_visibility="collapsed")
+    days = _PERIODS.get(per or "近 3 月", 66)
+    with st.spinner("加载 K 线…"):
+        rows = _kline_cached(ticker, days)
+    if not rows:
+        st.warning("暂无 K 线数据（该标的可能在 Yahoo 无历史行情）。")
+    elif go is None:
+        st.line_chart({"收盘价": [r["close"] for r in rows]})
+    else:
+        with st.container(border=True):
+            st.plotly_chart(_kline_figure(rows, market), use_container_width=True,
+                            config={"displayModeBar": False, "scrollZoom": True})
+    # 一键分析
+    st.button(f"🔬 用多智能体分析 {name}", type="primary", use_container_width=True,
+              on_click=_start_analysis, args=(market, ticker))
+    st.caption("进入「智能分析」：分析师团队 → 多空辩论 → 交易员 → 风控 → 组合经理，逐步推演到买/卖/持有决策。")
 
 
 # ===========================================================================
@@ -759,8 +857,9 @@ st.markdown(
     unsafe_allow_html=True)
 
 # 顶部导航：行情（打开默认）/ 智能分析
-if run:
-    st.session_state["nav_page"] = NAV_ANALYSIS  # 点「开始分析」-> 切到分析页
+do_run = bool(run) or bool(st.session_state.get("start_run"))
+if do_run:
+    st.session_state["nav_page"] = NAV_ANALYSIS  # 开始分析 -> 切到分析页
 page = st.segmented_control("页面", [NAV_MARKET, NAV_ANALYSIS], default=NAV_MARKET,
                             key="nav_page", label_visibility="collapsed")
 page = page or NAV_MARKET
@@ -821,10 +920,14 @@ def _placeholders():
     return out
 
 
-if page == NAV_MARKET:
-    render_market_page()
+if page == NAV_MARKET and not do_run:
+    if st.session_state.get("focus"):
+        render_detail_page(st.session_state["focus"])  # 右侧：个股 K 线 + 一键分析
+    else:
+        render_market_page()
 
-elif run:
+elif do_run:
+    st.session_state.pop("start_run", None)
     ui_cfg = _build_ui_cfg()
     if not ui_cfg["ticker"]:
         st.error("请填写标的代码"); st.stop()

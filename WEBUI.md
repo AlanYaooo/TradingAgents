@@ -7,7 +7,7 @@
 
 ```bash
 # 在仓库目录、用装好依赖的环境
-pip install streamlit akshare markdown   # 若尚未安装（markdown 用于导出 HTML 报告）
+pip install streamlit akshare markdown plotly   # markdown 导出报告、plotly 画 K 线
 streamlit run app.py
 # 或： .\.venv\Scripts\streamlit run app.py
 ```
@@ -17,9 +17,11 @@ streamlit run app.py
 ## 功能
 
 - **两个页面**（顶部「📈 行情 / 🔬 智能分析」切换）：
-  - **行情页**（打开默认）：选市场 → 看自选 + 热门标的的**实时报价**（名称/价格/涨跌幅），
-    点任一行 **🔬 分析** 即对该标的启动分析。A股实时报价走 eastmoney 直连，
-    美股/港股/币走 yfinance；每 30 秒缓存，可手动刷新。
+  - **行情页**（打开默认）：选市场 → 看自选 + 热门标的的**实时报价**（名称/价格/涨跌幅）。
+    A股实时报价走 eastmoney 直连，美股/港股/币走 yfinance；每 30 秒缓存，可手动刷新。
+  - **个股详情**：搜索选中 / 点自选股 / 点行情列表「📈 查看」→ 右侧出该股的
+    **K 线图**（蜡烛图 + 成交量，红涨绿跌，可选近 1 月 / 3 月 / 6 月 / 1 年，看走势），
+    底部一个 **「🔬 用多智能体分析」** 按钮，一键进入分析。K 线数据走 yfinance。
   - **智能分析页**：逐 agent 实时可视化（见下）。
 - **市场 4 大类切换**：🇨🇳 A股 · 🇺🇸 美股 · 🇭🇰 港股 · ₿ 虚拟币（分段按钮，非下拉）。
   - 数据源按市场**自动路由**：A股→akshare（行情/财报/新闻/宏观/千股千评情绪），

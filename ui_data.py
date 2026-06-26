@@ -356,6 +356,42 @@ def quotes(items: list[dict]) -> dict:
     return out
 
 
+def _period_for(days: int) -> str:
+    if days > 380:
+        return "2y"
+    if days > 180:
+        return "1y"
+    if days > 90:
+        return "6mo"
+    if days > 45:
+        return "3mo"
+    return "1mo"
+
+
+def kline(ticker: str, days: int = 130) -> list[dict]:
+    """日 K 线 OHLCV（yfinance，覆盖 A股/港股/美股/币；A股为 EOD 日线）。
+    返回 [{date, open, high, low, close, volume}]，按时间升序。"""
+    t = (ticker or "").strip()
+    if not t:
+        return []
+    import yfinance as yf
+    try:
+        h = yf.Ticker(t).history(period=_period_for(days), interval="1d", auto_adjust=False)
+    except Exception:  # noqa: BLE001
+        return []
+    rows = []
+    for idx, r in h.iterrows():
+        try:
+            o, hi, lo, c = float(r["Open"]), float(r["High"]), float(r["Low"]), float(r["Close"])
+            if o != o or c != c:  # NaN
+                continue
+            rows.append({"date": idx.strftime("%Y-%m-%d"), "open": o, "high": hi,
+                         "low": lo, "close": c, "volume": float(r.get("Volume", 0) or 0)})
+        except Exception:  # noqa: BLE001
+            pass
+    return rows[-days:]
+
+
 if __name__ == "__main__":  # 自测
     sys.stdout.reconfigure(encoding="utf-8")
     print("A股:", len(instrument_list(CN)), "| 港股:", len(instrument_list(HK)),

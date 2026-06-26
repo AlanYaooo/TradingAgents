@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 
 
 def main():
@@ -86,10 +87,36 @@ def main():
         return out
 
     def write(state, status, error=""):
+        # 绝不抛异常：Windows 上 reader 正打开目标文件时 os.replace 会 WinError 5，
+        # 单次失败不该把整个分析进程搞崩 —— 重试，再不行就直接覆盖写（reader 容忍偶发半包）。
+        payload = json.dumps(slim(state, status, error), ensure_ascii=False)
         tmp = progress_path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(slim(state, status, error), f, ensure_ascii=False)
-        os.replace(tmp, progress_path)  # atomic so the reader never sees a partial file
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(payload)
+        except Exception:  # noqa: BLE001
+            _direct_write(payload)
+            return
+        for _ in range(10):  # 原子替换，目标被占用时重试
+            try:
+                os.replace(tmp, progress_path)
+                return
+            except PermissionError:
+                time.sleep(0.05)
+            except Exception:  # noqa: BLE001
+                break
+        _direct_write(payload)  # 多次失败 -> 直接写主文件兜底
+        try:
+            os.remove(tmp)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _direct_write(payload):
+        try:
+            with open(progress_path, "w", encoding="utf-8") as f:
+                f.write(payload)
+        except Exception:  # noqa: BLE001
+            pass
 
     last = {}
     try:

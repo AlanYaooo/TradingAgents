@@ -287,6 +287,27 @@ def remove_from_watchlist(ticker: str, market: str) -> None:
                     if not (e["ticker"] == ticker and e.get("market") == market)])
 
 
+# 🔐 UI 设置（API key / base_url）持久化到本机 ~/.tradingagents/ui_settings.json
+SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".tradingagents", "ui_settings.json")
+
+
+def load_settings() -> dict:
+    try:
+        with open(SETTINGS_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def save_settings(s: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
+        with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+            json.dump(s, f, ensure_ascii=False, indent=2)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _set_target(market: str, ticker: str) -> None:
     # 在 on_click 回调里改 widget state 才合法（内联改 widget key 会抛异常）
     if market in MARKETS:
@@ -800,16 +821,31 @@ with st.sidebar:
                 st.rerun()
 
     st.markdown("### 🔌 LLM / API Key")
+    _settings = load_settings()
+    _saved_keys = _settings.get("keys", {})
     _provs = list(PROVIDERS.keys())
     prov_name = st.selectbox("Provider", _provs, index=_provs.index("DeepSeek"))
     provider, needs_url = PROVIDERS[prov_name]
     base_url = st.text_input("Base URL（中转站）",
-                             value=os.environ.get("TRADINGAGENTS_LLM_BACKEND_URL", "") if needs_url else "",
+                             value=(_settings.get("base_url") or os.environ.get("TRADINGAGENTS_LLM_BACKEND_URL", "")) if needs_url else "",
                              disabled=not needs_url, placeholder="https://...")
     key_env = PROVIDER_API_KEY_ENV.get(provider)
-    has_key = bool(key_env and os.environ.get(key_env))
-    api_key = st.text_input(f"API Key · {key_env or '—'}", type="password",
-                            placeholder="留空用 .env 中的值" if has_key else "粘贴 key")
+    has_env_key = bool(key_env and os.environ.get(key_env))
+    _saved_key = _saved_keys.get(key_env, "") if key_env else ""
+    api_key = st.text_input(f"API Key · {key_env or '—'}", type="password", value=_saved_key,
+                            placeholder="留空用 .env 中的值" if has_env_key else "粘贴 key")
+    remember = st.checkbox("💾 记住 API Key（本机明文保存，下次自动填）", value=True)
+    # 持久化：仅在有变化时写盘
+    _new_keys = dict(_saved_keys)
+    if key_env:
+        if remember and (api_key or "").strip():
+            _new_keys[key_env] = api_key.strip()
+        elif not remember:
+            _new_keys.pop(key_env, None)
+    _new_settings = {**_settings, "keys": _new_keys,
+                     "base_url": base_url if needs_url else _settings.get("base_url", "")}
+    if _new_settings != _settings:
+        save_settings(_new_settings)
     # 模型用下拉选择（不可手填），每个 provider 一组、各自默认
     models = PROVIDER_MODELS.get(provider, [])
     ddef, qdef = PROVIDER_DEFAULT.get(provider, (models[0] if models else "", models[-1] if models else ""))

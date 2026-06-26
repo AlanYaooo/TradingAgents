@@ -207,6 +207,7 @@ MARKETS = {
 }
 NAV_MARKET = "📈 行情"
 NAV_ANALYSIS = "🔬 智能分析"
+NAV_HISTORY = "📜 历史"
 PROVIDERS = {
     "Anthropic / Claude（含中转站）": ("anthropic", True),
     "OpenAI 兼容中转站": ("openai_compatible", True),
@@ -309,6 +310,59 @@ def save_settings(s: dict) -> None:
         pass
 
 
+# 📜 历史记录：每次完成的分析存一份到 ~/.tradingagents/history/，手动删除
+HISTORY_DIR = os.path.join(os.path.expanduser("~"), ".tradingagents", "history")
+
+
+def save_history(state: dict, cfg: dict) -> None:
+    try:
+        os.makedirs(HISTORY_DIR, exist_ok=True)
+        now = datetime.now()
+        hid = now.strftime("%Y%m%d_%H%M%S")
+        ticker, market = cfg.get("ticker", ""), cfg.get("market", "")
+        label, cls = _decision_action(state.get("final_trade_decision") or "")
+        item = {"id": hid, "ts": now.strftime("%Y-%m-%d %H:%M"),
+                "ticker": ticker, "name": ui_data.resolve_name(ticker, market) if ticker else ticker,
+                "market": market, "date_str": cfg.get("date_str", ""),
+                "decision": label, "decision_cls": cls, "state": state, "cfg": cfg}
+        with open(os.path.join(HISTORY_DIR, f"{hid}.json"), "w", encoding="utf-8") as f:
+            json.dump(item, f, ensure_ascii=False)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def load_history_index() -> list:
+    keys = ("id", "ts", "ticker", "name", "market", "date_str", "decision", "decision_cls")
+    items = []
+    try:
+        for fn in os.listdir(HISTORY_DIR):
+            if fn.endswith(".json"):
+                try:
+                    with open(os.path.join(HISTORY_DIR, fn), encoding="utf-8") as f:
+                        d = json.load(f)
+                    items.append({k: d.get(k) for k in keys})
+                except Exception:  # noqa: BLE001
+                    pass
+    except FileNotFoundError:
+        pass
+    return sorted(items, key=lambda x: x.get("id", ""), reverse=True)
+
+
+def load_history_item(hid: str) -> dict:
+    try:
+        with open(os.path.join(HISTORY_DIR, f"{hid}.json"), encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def delete_history(hid: str) -> None:
+    try:
+        os.remove(os.path.join(HISTORY_DIR, f"{hid}.json"))
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _set_target(market: str, ticker: str) -> None:
     # 在 on_click 回调里改 widget state 才合法（内联改 widget key 会抛异常）
     if market in MARKETS:
@@ -341,6 +395,18 @@ def _start_analysis(market: str, ticker: str) -> None:
     _set_target(market, ticker)
     st.session_state["nav_page"] = NAV_ANALYSIS
     st.session_state["start_run"] = True  # 详情页「开始 AI 分析」-> 直接跑
+
+
+def _view_history(hid: str) -> None:
+    item = load_history_item(hid)
+    if item.get("state"):
+        st.session_state["result"] = {"state": item["state"], "cfg": item.get("cfg", {})}
+        st.session_state["nav_page"] = NAV_ANALYSIS  # 在分析页重新展示该次结果
+        st.session_state.pop("focus", None)
+
+
+def _del_history(hid: str) -> None:
+    delete_history(hid)
 
 
 # ===========================================================================
@@ -785,6 +851,37 @@ def render_detail_page(focus: dict) -> None:
     st.caption("进入「智能分析」：分析师团队 → 多空辩论 → 交易员 → 风控 → 组合经理，逐步推演到买/卖/持有决策。")
 
 
+# ---- 历史记录页 ------------------------------------------------------------
+_DEC_COLOR = {"buy": "var(--green)", "sell": "var(--red)", "hold": "var(--amber)"}
+
+
+def render_history_page() -> None:
+    st.markdown('<div class="sec-title">📜 历史分析记录</div>', unsafe_allow_html=True)
+    items = load_history_index()
+    if not items:
+        st.info("还没有历史记录。每完成一次分析会自动存档在这里，可随时查看；想删时点 🗑️ 删除。")
+        return
+    st.caption(f"共 {len(items)} 条 · 自动存档，仅手动删除")
+    for it in items:
+        flag = (it.get("market") or "").split(" ")[0]
+        col = _DEC_COLOR.get(it.get("decision_cls"), "var(--faint)")
+        dec = it.get("decision") or "—"
+        with st.container(border=True):
+            c = st.columns([1.1, 4.4, 1, 1.1], vertical_alignment="center")
+            c[0].markdown(
+                f'<div style="text-align:center;font-weight:800;color:{col};border:1px solid {col};'
+                f'border-radius:9px;padding:5px 0;font-size:.95rem">{dec}</div>', unsafe_allow_html=True)
+            c[1].markdown(
+                f"<div style='font-weight:700'>{flag} {it.get('name') or it.get('ticker')}</div>"
+                f"<div style='color:var(--faint);font-size:.76rem;font-family:JetBrains Mono'>"
+                f"{it.get('ticker')} · 分析日 {it.get('date_str')} · 跑于 {it.get('ts')}</div>",
+                unsafe_allow_html=True)
+            c[2].button("查看", key=f"hv_{it['id']}", use_container_width=True,
+                        on_click=_view_history, args=(it["id"],))
+            c[3].button("🗑️ 删除", key=f"hd_{it['id']}", use_container_width=True,
+                        on_click=_del_history, args=(it["id"],))
+
+
 # ===========================================================================
 # 侧边栏
 # ===========================================================================
@@ -918,7 +1015,7 @@ st.markdown(
 do_run = bool(run) or bool(st.session_state.get("start_run"))
 if do_run:
     st.session_state["nav_page"] = NAV_ANALYSIS  # 开始分析 -> 切到分析页
-page = st.segmented_control("页面", [NAV_MARKET, NAV_ANALYSIS], default=NAV_MARKET,
+page = st.segmented_control("页面", [NAV_MARKET, NAV_ANALYSIS, NAV_HISTORY], default=NAV_MARKET,
                             key="nav_page", label_visibility="collapsed")
 page = page or NAV_MARKET
 
@@ -956,7 +1053,7 @@ def _build_ui_cfg():
     name2key = {a[0]: a[3] for a in ANALYSTS}
     return {
         "ticker": (ticker or "").strip(), "date_str": trade_date.strftime("%Y-%m-%d"),
-        "asset_type": mkt["asset_type"], "provider": provider,
+        "asset_type": mkt["asset_type"], "market": market_name, "provider": provider,
         # Only relay providers use a base_url. Do NOT fall back to the .env
         # relay URL for native providers (DeepSeek/OpenAI/...), or their
         # requests get sent to the relay and 401 (#relay-leak).
@@ -978,7 +1075,10 @@ def _placeholders():
     return out
 
 
-if page == NAV_MARKET and not do_run:
+if page == NAV_HISTORY and not do_run:
+    render_history_page()
+
+elif page == NAV_MARKET and not do_run:
     if st.session_state.get("focus"):
         render_detail_page(st.session_state["focus"])  # 右侧：个股 K 线 + 一键分析
     else:
@@ -1040,6 +1140,7 @@ elif do_run:
         status_ph.success(f"✅ 分析完成 · 用时 {int((time.time()-t0)//60)} 分 {int((time.time()-t0)%60)} 秒")
         st.session_state["result"] = {"state": state, "cfg": ui_cfg}
         if state.get("final_trade_decision"):
+            save_history(state, ui_cfg)  # 自动存档到历史记录
             render_report_download(state, ui_cfg)
 
 elif st.session_state.get("result"):

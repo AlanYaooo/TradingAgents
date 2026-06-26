@@ -333,7 +333,7 @@ def save_history(state: dict, cfg: dict) -> None:
 
 
 def load_history_index() -> list:
-    keys = ("id", "ts", "ticker", "name", "market", "date_str", "decision", "decision_cls")
+    keys = ("id", "ts", "ticker", "name", "market", "date_str")
     items = []
     try:
         for fn in os.listdir(HISTORY_DIR):
@@ -341,7 +341,14 @@ def load_history_index() -> list:
                 try:
                     with open(os.path.join(HISTORY_DIR, fn), encoding="utf-8") as f:
                         d = json.load(f)
-                    items.append({k: d.get(k) for k in keys})
+                    it = {k: d.get(k) for k in keys}
+                    # 徽章每次都从决策原文重算（用修好的解析），自动纠正旧的错误徽章
+                    fd = (d.get("state") or {}).get("final_trade_decision") or ""
+                    if fd:
+                        it["decision"], it["decision_cls"] = _decision_action(fd)
+                    else:
+                        it["decision"], it["decision_cls"] = d.get("decision") or "—", d.get("decision_cls") or "hold"
+                    items.append(it)
                 except Exception:  # noqa: BLE001
                     pass
     except FileNotFoundError:
@@ -541,27 +548,56 @@ def render_risk(state: dict, ph):
                     st.markdown((v or "").strip() or "_…_")
 
 
-_ACTIONS = [("BUY", "buy", ["buy", "买入", "增持", "看多", "overweight"]),
-            ("SELL", "sell", ["sell", "卖出", "减持", "看空", "underweight"]),
-            ("HOLD", "hold", ["hold", "持有", "观望", "中性", "neutral"])]
+_ACTIONS = [("BUY", "buy", ["buy", "买入", "增持", "看多", "overweight", "超配"]),
+            ("SELL", "sell", ["sell", "卖出", "减持", "看空", "underweight", "低配"]),
+            ("HOLD", "hold", ["hold", "持有", "观望", "中性", "neutral", "equal-weight"])]
+
+# 裁决词 -> 动作。注意 overweight/超配=增持=BUY，underweight/低配=减仓=SELL（常被误解为相反）。
+_VERDICT = {
+    "buy": "BUY", "买入": "BUY", "增持": "BUY", "看多": "BUY", "overweight": "BUY",
+    "超配": "BUY", "outperform": "BUY", "accumulate": "BUY", "long": "BUY", "bullish": "BUY",
+    "sell": "SELL", "卖出": "SELL", "减持": "SELL", "看空": "SELL", "underweight": "SELL",
+    "低配": "SELL", "underperform": "SELL", "reduce": "SELL", "short": "SELL", "bearish": "SELL",
+    "hold": "HOLD", "持有": "HOLD", "观望": "HOLD", "中性": "HOLD", "neutral": "HOLD",
+    "equal-weight": "HOLD", "equalweight": "HOLD", "maintain": "HOLD", "market-perform": "HOLD",
+}
+
+
+def _word_to_action(w: str):
+    w = (w or "").strip().strip("：:*。.，, ").lower()
+    if not w:
+        return None
+    if w in _VERDICT:
+        lab = _VERDICT[w]
+        return lab, lab.lower()
+    for key, lab in _VERDICT.items():
+        if w.startswith(key):
+            return lab, lab.lower()
+    return None
 
 
 def _decision_action(text: str):
-    t = (text or "").lower()
-    m = re.search(r"final transaction proposal:\s*\*?\*?\s*(buy|sell|hold)", t)
-    word = m.group(1) if m else None
-    if not word:
-        m2 = re.search(r"\*\*(?:action|rating)\*\*\s*[:：]\s*\*?\*?\s*(buy|sell|hold|买入|卖出|持有)", t)
-        word = m2.group(1) if m2 else None
-    if not word:
-        for label, cls, keys in _ACTIONS:
-            if any(k in t for k in keys):
-                return label, cls
-        return "—", "hold"
+    tl = (text or "").lower()
+    # 1) 显式裁决最可靠：FINAL TRANSACTION PROPOSAL: X、**Rating/Action/最终判断/最终决策**: X
+    for pat in (r"final\s+transaction\s+proposal\s*[:：]\s*\*{0,2}\s*([a-z一-鿿\-]+)",
+                r"\*{0,2}\s*(?:rating|action|recommendation|stance|最终判断|最终决策|最终建议|投资评级|评级|结论)"
+                r"\s*\*{0,2}\s*[:：]\s*\*{0,2}\s*([a-z一-鿿\-]+)"):
+        m = re.search(pat, tl)
+        if m:
+            a = _word_to_action(m.group(1))
+            if a:
+                return a
+    # 2) 文首裸词（很多决策第一行就是裁决词）
+    m = re.match(r"\s*\*{0,2}\s*([a-z一-鿿\-]+)", tl)
+    if m:
+        a = _word_to_action(m.group(1))
+        if a:
+            return a
+    # 3) 兜底：全文关键词扫描（最不可靠——会被论证里顺带提到的词如"买入看跌期权"误导，故放最后）
     for label, cls, keys in _ACTIONS:
-        if word in keys or word == label.lower():
+        if any(k in tl for k in keys):
             return label, cls
-    return word.upper(), "hold"
+    return "—", "hold"
 
 
 def render_final(state: dict, ph):

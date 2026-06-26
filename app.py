@@ -19,6 +19,8 @@ from datetime import date, datetime
 
 import streamlit as st
 
+import ui_data  # 名称解析 / 名称搜索 / 实时报价（不依赖 akshare，避免 py_mini_racer 崩）
+
 APP_NAME = "千机智能体"
 
 st.set_page_config(
@@ -195,6 +197,8 @@ MARKETS = {
     "₿ 虚拟币": dict(asset_type="crypto", examples=["BTC-USD", "ETH-USD", "SOL-USD"],
                    data="yfinance · +Reddit/StockTwits/Polymarket 事件盘"),
 }
+NAV_MARKET = "📈 行情"
+NAV_ANALYSIS = "🔬 智能分析"
 PROVIDERS = {
     "Anthropic / Claude（含中转站）": ("anthropic", True),
     "OpenAI 兼容中转站": ("openai_compatible", True),
@@ -266,7 +270,7 @@ def add_to_watchlist(ticker: str, market: str) -> bool:
     wl = load_watchlist()
     if any(e["ticker"] == ticker and e.get("market") == market for e in wl):
         return False
-    wl.append({"ticker": ticker, "market": market})
+    wl.append({"ticker": ticker, "market": market, "name": ui_data.resolve_name(ticker, market)})
     save_watchlist(wl)
     return True
 
@@ -276,12 +280,26 @@ def remove_from_watchlist(ticker: str, market: str) -> None:
                     if not (e["ticker"] == ticker and e.get("market") == market)])
 
 
-def _select_watchlist(market: str, ticker: str) -> None:
-    # 在 on_click 回调里改 widget state 才合法（内联改 selectbox key 会抛异常）
+def _set_target(market: str, ticker: str) -> None:
+    # 在 on_click 回调里改 widget state 才合法（内联改 widget key 会抛异常）
     if market in MARKETS:
         st.session_state["market_sel"] = market
         st.session_state["_mkt"] = market
     st.session_state["ticker"] = ticker
+
+
+def _select_watchlist(market: str, ticker: str) -> None:
+    _set_target(market, ticker)
+
+
+def _pick_search(market: str, ticker: str) -> None:
+    _set_target(market, ticker)
+    st.session_state["search_q"] = ""  # 选中后清空搜索框
+
+
+def _goto_analysis(market: str, ticker: str) -> None:
+    _set_target(market, ticker)
+    st.session_state["nav_page"] = NAV_ANALYSIS  # 从行情页点「分析」-> 跳到分析页
 
 
 # ===========================================================================
@@ -546,45 +564,134 @@ def build_report_html(state: dict, cfg: dict) -> str:
 
 
 # ===========================================================================
+# 行情页（打开先看到的页面）
+# ===========================================================================
+@st.cache_data(ttl=30, show_spinner=False)
+def _quotes_cached(tickers: tuple, market: str) -> dict:
+    return ui_data.quotes([{"ticker": t, "market": market} for t in tickers])
+
+
+@st.cache_data(ttl=21600, show_spinner="📥 正在加载 A 股名单（首次约 20 秒，之后秒开）…")
+def _warm_cn_list() -> list:
+    return ui_data.cn_stock_list()
+
+
+def _fmt_price(p) -> str:
+    if p is None:
+        return "—"
+    return f"{p:,.2f}" if p >= 1 else f"{p:.4f}"
+
+
+def render_quotes_table(market: str) -> None:
+    if market == "🇨🇳 A股":
+        _warm_cn_list()
+    wl = [e for e in load_watchlist() if e.get("market") == market]
+    names = {e["ticker"]: e.get("name") for e in wl}
+    tickers: list[str] = []
+    for t in [e["ticker"] for e in wl] + ui_data.default_tickers(market):
+        if t not in tickers:
+            tickers.append(t)
+    if not tickers:
+        st.caption("暂无标的，去左侧搜索后「⭐ 加入自选」。")
+        return
+    qd = _quotes_cached(tuple(tickers), market)
+    h = st.columns([5, 2, 2, 2], vertical_alignment="center")
+    for col, lbl in zip(h, ["名称 / 代码", "最新价", "涨跌幅", ""], strict=False):
+        col.markdown(f"<span style='color:var(--faint);font-size:.72rem;font-weight:700;"
+                     f"letter-spacing:.05em'>{lbl}</span>", unsafe_allow_html=True)
+    for t in tickers:
+        q = qd.get(t) or {}
+        name = names.get(t) or ui_data.resolve_name(t, market)
+        price, chg = q.get("price"), q.get("chg")
+        star = "⭐ " if t in names else ""
+        c = st.columns([5, 2, 2, 2], vertical_alignment="center")
+        c[0].markdown(
+            f"<div style='font-weight:700'>{star}{name}</div>"
+            f"<div style='color:var(--faint);font-size:.74rem;font-family:JetBrains Mono'>{t}</div>",
+            unsafe_allow_html=True)
+        c[1].markdown(f"<div style='font-family:JetBrains Mono;font-size:1.0rem'>{_fmt_price(price)}</div>",
+                      unsafe_allow_html=True)
+        if chg is None:
+            c[2].markdown("<span style='color:var(--faint)'>—</span>", unsafe_allow_html=True)
+        else:
+            col = "var(--green)" if chg >= 0 else "var(--red)"
+            c[2].markdown(f"<div style='color:{col};font-weight:700;font-family:JetBrains Mono'>"
+                          f"{chg:+.2f}%</div>", unsafe_allow_html=True)
+        c[3].button("🔬 分析", key=f"an_{market}_{t}", use_container_width=True,
+                    on_click=_goto_analysis, args=(market, t))
+
+
+def render_market_page() -> None:
+    st.markdown('<div class="sec-title">📈 实时行情 · 选标的开始分析</div>', unsafe_allow_html=True)
+    mname = st.segmented_control("市场", list(MARKETS.keys()), default="🇨🇳 A股",
+                                 key="mkt_page_sel", label_visibility="collapsed")
+    mname = mname or "🇨🇳 A股"
+    rc = st.columns([6, 1], vertical_alignment="center")
+    rc[0].caption(f"📡 {MARKETS[mname]['data']} · 自选 + 热门，每 30 秒缓存")
+    if rc[1].button("🔄 刷新", use_container_width=True):
+        _quotes_cached.clear()
+        st.rerun()
+    with st.container(border=True):
+        render_quotes_table(mname)
+    st.info("点某行的 **🔬 分析** 启动多智能体分析；或在左侧搜名称、用 **⭐ 自选库** 挑选。")
+
+
+# ===========================================================================
 # 侧边栏
 # ===========================================================================
 with st.sidebar:
     st.markdown("### 🎯 分析对象")
-    market_name = st.selectbox("市场 / 资产", list(MARKETS.keys()), key="market_sel", label_visibility="collapsed")
+    # 4 大类切换（A股 / 美股 / 港股 / 虚拟币）—— 替代下拉
+    market_name = st.segmented_control("市场 / 资产", list(MARKETS.keys()), default="🇨🇳 A股",
+                                       key="market_sel", label_visibility="collapsed")
+    market_name = market_name or "🇨🇳 A股"
     mkt = MARKETS[market_name]
     if st.session_state.get("_mkt") != market_name:
         st.session_state["_mkt"] = market_name
         st.session_state["ticker"] = mkt["examples"][0]
+    # 名称 / 代码搜索：输入即出最匹配的几只，点选即填
+    if market_name == "🇨🇳 A股":
+        _warm_cn_list()
+    _q = st.text_input("🔎 搜名称 / 代码", key="search_q", placeholder="如 茅台 / 600519 / NVDA")
+    if (_q or "").strip():
+        _matches = ui_data.search(_q.strip(), market_name, n=8)
+        if _matches:
+            for _m in _matches:
+                st.button(f"{_m['name']}　·　{_m['ticker']}", key=f"srch_{_m['market']}_{_m['ticker']}",
+                          use_container_width=True, on_click=_pick_search,
+                          args=(_m["market"], _m["ticker"]))
+        else:
+            st.caption("无匹配，可直接在下方填代码")
     ticker = st.text_input("代码", key="ticker")
-    chip_cols = st.columns(len(mkt["examples"]))
-    for c, ex in zip(chip_cols, mkt["examples"], strict=False):
-        if c.button(ex, key=f"ex_{ex}", use_container_width=True):
-            st.session_state["ticker"] = ex
-            st.rerun()
-    if st.button("⭐ 加入自选库", use_container_width=True):
+    _cur_name = ui_data.resolve_name(ticker, market_name)
+    if _cur_name and _cur_name != (ticker or "").strip():
+        st.caption(f"📌 当前：{_cur_name}")
+    if st.button("⭐ 加入自选", use_container_width=True):
         if add_to_watchlist(ticker, market_name):
-            st.toast(f"已加入自选：{ticker}")
+            st.toast(f"已加入自选：{_cur_name or ticker}")
         st.rerun()
     st.caption(f"📡 {mkt['data']}")
     trade_date = st.date_input("分析日期", value=date(2026, 6, 23))
 
-    # ⭐ 自选库
-    st.markdown("### ⭐ 自选库")
+    # ⭐ 自选库（可折叠，默认收起；显示名称）
     _wl = load_watchlist()
-    if not _wl:
-        st.caption("还没有自选标的。填好代码后点上面「⭐ 加入自选库」。")
-    for _e in _wl:
-        _mk = _e.get("market", market_name)
-        _flag = (_mk or "").split(" ")[0]
-        wc1, wc2 = st.columns([5, 1])
-        wc1.button(f"{_flag} {_e['ticker']}", key=f"wl_{_mk}_{_e['ticker']}", use_container_width=True,
-                   on_click=_select_watchlist, args=(_mk, _e["ticker"]))
-        if wc2.button("✕", key=f"wldel_{_mk}_{_e['ticker']}", use_container_width=True):
-            remove_from_watchlist(_e["ticker"], _mk)
-            st.rerun()
+    with st.expander(f"⭐ 自选库 · {len(_wl)}", expanded=False):
+        if not _wl:
+            st.caption("还没有自选标的。搜索或填代码后点「⭐ 加入自选」。")
+        for _e in _wl:
+            _mk = _e.get("market", market_name)
+            _flag = (_mk or "").split(" ")[0]
+            _nm = _e.get("name") or ui_data.resolve_name(_e["ticker"], _mk)
+            wc1, wc2 = st.columns([5, 1], vertical_alignment="center")
+            wc1.button(f"{_flag} {_nm}", key=f"wl_{_mk}_{_e['ticker']}", use_container_width=True,
+                       on_click=_select_watchlist, args=(_mk, _e["ticker"]), help=_e["ticker"])
+            if wc2.button("✕", key=f"wldel_{_mk}_{_e['ticker']}", use_container_width=True):
+                remove_from_watchlist(_e["ticker"], _mk)
+                st.rerun()
 
     st.markdown("### 🔌 LLM / API Key")
-    prov_name = st.selectbox("Provider", list(PROVIDERS.keys()))
+    _provs = list(PROVIDERS.keys())
+    prov_name = st.selectbox("Provider", _provs, index=_provs.index("DeepSeek"))
     provider, needs_url = PROVIDERS[prov_name]
     base_url = st.text_input("Base URL（中转站）",
                              value=os.environ.get("TRADINGAGENTS_LLM_BACKEND_URL", "") if needs_url else "",
@@ -638,6 +745,13 @@ st.markdown(
     '<span class="tag">风控评估</span><span class="tag">组合经理决策</span></div>',
     unsafe_allow_html=True)
 
+# 顶部导航：行情（打开默认）/ 智能分析
+if run:
+    st.session_state["nav_page"] = NAV_ANALYSIS  # 点「开始分析」-> 切到分析页
+page = st.segmented_control("页面", [NAV_MARKET, NAV_ANALYSIS], default=NAV_MARKET,
+                            key="nav_page", label_visibility="collapsed")
+page = page or NAV_MARKET
+
 # dev 预览：?demo=1 加载最近一次已完成的 run，用于设计调试（无需实跑）
 if st.query_params.get("demo") and "result" not in st.session_state:
     import glob
@@ -647,6 +761,7 @@ if st.query_params.get("demo") and "result" not in st.session_state:
             _d = json.load(open(_fp, encoding="utf-8"))
             if _d.get("status") == "done" and (_d.get("final_trade_decision") or "").strip():
                 st.session_state["result"] = {"state": _d, "cfg": {"ticker": "BTC-USD", "date_str": "2026-06-23"}}
+                page = NAV_ANALYSIS
                 break
         except Exception:  # noqa: BLE001
             pass
@@ -693,7 +808,10 @@ def _placeholders():
     return out
 
 
-if run:
+if page == NAV_MARKET:
+    render_market_page()
+
+elif run:
     ui_cfg = _build_ui_cfg()
     if not ui_cfg["ticker"]:
         st.error("请填写标的代码"); st.stop()

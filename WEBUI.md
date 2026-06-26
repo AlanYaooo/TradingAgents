@@ -16,12 +16,21 @@ streamlit run app.py
 
 ## 功能
 
-- **市场 / 资产选择**：🇨🇳 A股 · 🇺🇸 美股 · 🇭🇰 港股 · ₿ 虚拟币
+- **两个页面**（顶部「📈 行情 / 🔬 智能分析」切换）：
+  - **行情页**（打开默认）：选市场 → 看自选 + 热门标的的**实时报价**（名称/价格/涨跌幅），
+    点任一行 **🔬 分析** 即对该标的启动分析。A股实时报价走 eastmoney 直连，
+    美股/港股/币走 yfinance；每 30 秒缓存，可手动刷新。
+  - **智能分析页**：逐 agent 实时可视化（见下）。
+- **市场 4 大类切换**：🇨🇳 A股 · 🇺🇸 美股 · 🇭🇰 港股 · ₿ 虚拟币（分段按钮，非下拉）。
   - 数据源按市场**自动路由**：A股→akshare（行情/财报/新闻/宏观/千股千评情绪），
     美股/港股/币→yfinance（+Reddit/StockTwits/Polymarket/FRED）。
-  - 代码写法随市场，如 `600519.SS`、`AAPL`、`0700.HK`、`BTC-USD`。
-- **LLM / API Key 配置**：provider（含 Anthropic 格式中转站）、Base URL、API Key、
-  深/快模型、辩论轮数、输出语言。表单会**自动预填** `.env` 里已有的值（key 留空即用 `.env`）。
+- **按名称搜标的**：输入「茅台 / 600519 / NVDA」即出最匹配的几只，点选自动填代码
+  （A股全表来自交易所官方源，按天缓存；首次约 20 秒）。
+- **⭐ 自选库**：收藏关注的标的（**按名称显示**），可折叠列表（标的多了不占地方），
+  点一下即载入（市场 + 代码一起切好），✕ 删除。持久化到 `~/.tradingagents/watchlist.json`。
+- **LLM / API Key 配置**：provider（默认 DeepSeek；含 Anthropic 格式中转站）、Base URL、
+  API Key、深/快模型（按 provider **下拉选择不手填**）、辩论轮数、输出语言。
+  表单会**自动预填** `.env` 里已有的值（key 留空即用 `.env`）。
 - **逐 agent 实时可视化**：流程状态条 + 五个阶段
   1. 分析师团队（市场/情绪/新闻/基本面，各自取数产报告）
   2. 研究员辩论（多头🐂 vs 空头🐻，研究经理裁决）
@@ -36,6 +45,10 @@ streamlit run app.py
 - 分析在**独立子进程**（`ui_worker.py`）里运行，进度以 JSON 写盘、Streamlit 轮询渲染。
   这是必须的：akshare 内部用 `py_mini_racer`(V8)，在 Streamlit 的脚本线程里初始化会
   与其原生库冲突直接崩进程；放进子进程主线程后稳定。
+- **行情 / 名称数据层**（`ui_data.py`）刻意**不 import akshare**（同样为避开 py_mini_racer）：
+  A股名称/报价直连 eastmoney（纯 requests），美股/港股/币用 yfinance。唯一需要 akshare 的
+  「A股代码↔名称全表」由 `cn_list_worker.py` **子进程**用交易所官方源拉取、按天缓存到
+  `~/.tradingagents/cn_stocks.json`。
 - 中转站健壮性（streaming / max_tokens / timeout / retries）由 `.env` 的
   `TRADINGAGENTS_*` 驱动，UI 自动带上。
 

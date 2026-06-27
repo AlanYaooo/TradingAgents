@@ -101,7 +101,8 @@ code, pre, [data-testid="stMetricValue"]{ font-family:'JetBrains Mono',monospace
 [data-testid="stExpandSidebarButton"] button{ color:var(--text) !important; }
 .block-container{ padding-top:1.5rem; padding-bottom:3rem; max-width:1300px; }
 
-section[data-testid="stSidebar"]{ background:var(--sidebar); border-right:1px solid var(--border-soft); }
+section[data-testid="stSidebar"]{ background:var(--sidebar); border-right:1px solid var(--border-soft);
+  width:372px !important; min-width:372px !important; }   /* 加宽：4 个带 emoji 的市场分段挤一行 + 模型下拉更宽松 */
 section[data-testid="stSidebar"] .block-container{ padding-top:1.1rem; }
 section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3{
   font-size:.78rem !important; letter-spacing:.10em; text-transform:uppercase; color:var(--faint) !important; font-weight:700; margin:.2rem 0 .4rem; }
@@ -259,9 +260,15 @@ NAV_ANALYSIS = "🔬 智能分析"
 NAV_HISTORY = "📜 历史"
 
 
+# 市场分段控件的显示标签：用单字符 emoji（Windows 下能渲染、有辨识度），不用旗帜
+# （🇨🇳 在 Windows 会显示成 "CN" 文字、占宽且难看）。
+# 用不间断空格  ：普通空格在彩色 emoji 后会被 markdown 折叠掉（4 个里只有 ₿ 留了缝、不一致）
+_MKT_LABEL = {"🇨🇳 A股": "🏮 A股", "🇺🇸 美股": "🗽 美股",
+              "🇭🇰 港股": "🏙 港股", "₿ 虚拟币": "₿ 虚拟币"}
+
+
 def _mkt_short(m: str) -> str:
-    # 市场分段控件只显示短名（去掉旗帜前缀，Windows 下旗帜会显示成 "CN" 占宽、4 个挤不下一行）
-    return m.split(" ", 1)[1] if " " in m else m
+    return _MKT_LABEL.get(m, m.split(" ", 1)[1] if " " in m else m)
 PROVIDERS = {
     "Anthropic / Claude（含中转站）": ("anthropic", True),
     "OpenAI 兼容中转站": ("openai_compatible", True),

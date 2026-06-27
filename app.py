@@ -929,7 +929,7 @@ def render_report_download(state: dict, cfg: dict) -> None:
 # ===========================================================================
 # 行情页（打开先看到的页面）
 # ===========================================================================
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner="📡 加载行情…")
 def _quotes_cached(tickers: tuple, market: str) -> dict:
     return ui_data.quotes([{"ticker": t, "market": market} for t in tickers])
 
@@ -1364,7 +1364,8 @@ elif do_run:
 
     st.markdown('<div class="sec-title">实时进度</div>', unsafe_allow_html=True)
     step_ph, kpi_ph, status_ph = st.empty(), st.empty(), st.empty()
-    status_ph.info(f"🔧 启动分析 · {ui_cfg['ticker']} @ {ui_cfg['date_str']} · {provider}/{deep_model}")
+    status_ph.info(f"🔧 分析进行中 · {ui_cfg['ticker']} @ {ui_cfg['date_str']} · {provider}/{deep_model}"
+                   "　|　约几分钟（数十次 LLM 调用），请保持页面打开")
     phs = _placeholders()
 
     # 启动前先终止上一次可能仍在运行的 worker：rerun / 切页会丢弃下面的轮询循环，
@@ -1409,6 +1410,8 @@ elif do_run:
     if status == "error":
         status_ph.error("运行出错")
         st.error(state.get("error", "未知错误"))
+        st.info("💡 怎么办：① 确认左侧 **Provider 与 API Key 匹配**（最常见：选了 DeepSeek 却填了中转站的 "
+                "key，或反之）；② 用中转站要填 **Base URL**；③ 检查网络 / 额度后，点 **🚀 开始分析** 重试。")
     else:
         status_ph.success(f"✅ 分析完成 · 用时 {int((time.time()-t0)//60)} 分 {int((time.time()-t0)%60)} 秒")
         st.session_state["result"] = {"state": state, "cfg": ui_cfg}

@@ -33,7 +33,7 @@ APP_NAME = "千机智能体"
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 st.set_page_config(
-    page_title=f"{APP_NAME} · 多智能体交易分析",
+    page_title=f"{APP_NAME} · 你的 AI 股市助手",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -1270,7 +1270,7 @@ st.markdown(
     'stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 6"/>'
     '<polyline points="15 6 21 6 21 12"/></svg></div>'
     f'<div><div class="bn">{APP_NAME}<span class="en">TRADINGAGENTS</span></div>'
-    '<div class="bt">多智能体交易分析 · 实时行情 · 逐 agent 推演到买卖决策</div></div></div>',
+    '<div class="bt">你的 AI 股市助手 · 看行情 · 找标的 · 多智能体帮你做决策</div></div></div>',
     unsafe_allow_html=True)
 
 # dev 预览：?demo=1 加载最近一次已完成的 run（须在 nav_page 控件实例化前设置 widget 状态，

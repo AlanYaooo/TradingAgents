@@ -104,6 +104,10 @@ code, pre, [data-testid="stMetricValue"]{ font-family:'JetBrains Mono',monospace
 section[data-testid="stSidebar"]{ background:var(--sidebar); border-right:1px solid var(--border-soft);
   width:372px !important; min-width:372px !important; }   /* 加宽：4 个带 emoji 的市场分段挤一行 + 模型下拉更宽松 */
 section[data-testid="stSidebar"] .block-container{ padding-top:1.1rem; }
+.keycard{ background:var(--panel2); border:1px solid var(--border); border-radius:10px;
+  padding:9px 12px; margin:2px 0 8px; font-size:.88rem; color:var(--text);
+  display:flex; align-items:center; gap:8px; }
+.keycard code{ background:transparent; padding:0; color:var(--brand); font-weight:700; letter-spacing:.4px; }
 section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3{
   font-size:.78rem !important; letter-spacing:.10em; text-transform:uppercase; color:var(--faint) !important; font-weight:700; margin:.2rem 0 .4rem; }
 
@@ -369,6 +373,42 @@ def save_settings(s: dict) -> None:
             json.dump(s, f, ensure_ascii=False, indent=2)
     except Exception:  # noqa: BLE001
         pass
+
+
+# 🔑 API Key 配置式交互：保存是显式按钮、清除/更换也是显式按钮（杜绝误触丢 key）。
+def _mask_key(k: str) -> str:
+    """打码展示：sk-9……P5OT —— 够认出是哪把 key，又不泄露全文。"""
+    k = (k or "").strip()
+    if len(k) <= 8:
+        return "•" * max(len(k), 4)
+    return f"{k[:4]}……{k[-4:]}"
+
+
+def _set_key_edit(key_env: str, editing: bool) -> None:
+    st.session_state[f"keyedit_{key_env}"] = editing
+
+
+def _save_key(key_env: str) -> None:
+    """把输入框里的 key 显式写盘；保存后收起输入、显示「已配置」。"""
+    val = (st.session_state.get(f"keyin_{key_env}") or "").strip()
+    if not val:
+        st.toast("请先粘贴 API Key 再保存"); return
+    s = load_settings()
+    keys = dict(s.get("keys", {})); keys[key_env] = val; s["keys"] = keys
+    save_settings(s)
+    st.session_state[f"keyedit_{key_env}"] = False
+    st.session_state.pop(f"keyin_{key_env}", None)  # 清空输入框，下次「更换」时是干净的
+    st.toast("✅ API Key 已保存")
+
+
+def _clear_key(key_env: str) -> None:
+    """显式清除已保存的 key —— 只有点这个按钮才会删。"""
+    s = load_settings()
+    keys = dict(s.get("keys", {})); keys.pop(key_env, None); s["keys"] = keys
+    save_settings(s)
+    st.session_state[f"keyedit_{key_env}"] = False
+    st.session_state.pop(f"keyin_{key_env}", None)
+    st.toast("已清除保存的 API Key")
 
 
 # 📜 历史记录：每次完成的分析存一份到 ~/.tradingagents/history/，手动删除
@@ -1213,32 +1253,60 @@ with st.sidebar:
                 remove_from_watchlist(_e["ticker"], _mk)
                 st.rerun()
 
-    st.markdown("### 🔌 LLM / API Key")
+    st.markdown("### 🔌 模型接入")
     _settings = load_settings()
     _saved_keys = _settings.get("keys", {})
     _provs = list(PROVIDERS.keys())
     prov_name = st.selectbox("Provider", _provs, index=_provs.index("DeepSeek"))
     provider, needs_url = PROVIDERS[prov_name]
-    base_url = st.text_input("Base URL（中转站）",
-                             value=(_settings.get("base_url") or os.environ.get("TRADINGAGENTS_LLM_BACKEND_URL", "")) if needs_url else "",
+    # value= 和持久化判断都用同一个 _url_default：没改过的（=.env 里的默认值）就不要写盘，
+    # 否则首次渲染就把 .env 的中转站地址固化进 ui_settings.json，之后改 .env 反而被它盖住。
+    _url_default = (_settings.get("base_url") or os.environ.get("TRADINGAGENTS_LLM_BACKEND_URL", "")) if needs_url else ""
+    base_url = st.text_input("Base URL（中转站）", value=_url_default,
                              disabled=not needs_url, placeholder="https://...")
+    if needs_url and base_url != _url_default:   # 只有用户真改了才落盘（重新读盘合并，避免覆盖 key 回调刚写入的）
+        _s = load_settings(); _s["base_url"] = base_url; save_settings(_s)
+
+    # --- API Key：配置式 —— 保存后收起、不再每次出现；更换/清除是显式按钮，杜绝误触丢 key ---
     key_env = PROVIDER_API_KEY_ENV.get(provider)
+    # 切 Provider 时清掉刚进入的这个 provider 残留的"编辑中"状态，否则更换后切走再切回会卡在空输入框
+    if st.session_state.get("_last_key_env") != key_env:
+        st.session_state["_last_key_env"] = key_env
+        st.session_state.pop(f"keyedit_{key_env}", None)
     has_env_key = bool(key_env and os.environ.get(key_env))
     _saved_key = _saved_keys.get(key_env, "") if key_env else ""
-    api_key = st.text_input(f"API Key · {key_env or '—'}", type="password", value=_saved_key,
-                            placeholder="留空用 .env 中的值" if has_env_key else "粘贴 key")
-    remember = st.checkbox("💾 记住 API Key（本机明文保存，下次自动填）", value=True)
-    # 持久化：仅在有变化时写盘
-    _new_keys = dict(_saved_keys)
-    if key_env:
-        if remember and (api_key or "").strip():
-            _new_keys[key_env] = api_key.strip()
-        elif not remember:
-            _new_keys.pop(key_env, None)
-    _new_settings = {**_settings, "keys": _new_keys,
-                     "base_url": base_url if needs_url else _settings.get("base_url", "")}
-    if _new_settings != _settings:
-        save_settings(_new_settings)
+    _editing = bool(st.session_state.get(f"keyedit_{key_env}"))
+    if key_env is None:                                       # 该 provider 无需 key
+        api_key = ""
+        st.caption("✅ 该 Provider 无需 API Key")
+    elif _saved_key and not _editing:                         # 已保存在本机
+        api_key = _saved_key
+        st.markdown(f'<div class="keycard">🔑 API Key 已配置 · <code>{_mask_key(_saved_key)}</code></div>',
+                    unsafe_allow_html=True)
+        _kc = st.columns(2)
+        _kc[0].button("更换", key=f"keychg_{key_env}", use_container_width=True,
+                      on_click=_set_key_edit, args=(key_env, True))
+        _kc[1].button("清除", key=f"keyclr_{key_env}", use_container_width=True,
+                      on_click=_clear_key, args=(key_env,))
+    elif has_env_key and not _editing:                        # 没本机 key，但 .env 里有
+        api_key = ""
+        st.markdown('<div class="keycard">🔑 使用 .env 中的 API Key</div>', unsafe_allow_html=True)
+        st.button("改用其它 Key", key=f"keyovr_{key_env}", use_container_width=True,
+                  on_click=_set_key_edit, args=(key_env, True))
+    else:                                                     # 未配置 / 编辑中：输入 + 保存
+        _ph = ("留空＝继续用已保存的 key" if _saved_key
+               else "留空则用 .env 中的 key" if has_env_key else "粘贴 key 后点保存")
+        _typed = st.text_input(f"API Key · {key_env}", type="password", key=f"keyin_{key_env}", placeholder=_ph)
+        # 编辑中没输入就别把已保存/.env 的 key 顶成空——否则更换时直接开跑会丢 key 走 .env（评审 #1）
+        api_key = (_typed or "").strip() or _saved_key
+        _has_fallback = bool(_saved_key or has_env_key or _editing)
+        _bc = st.columns(2) if _has_fallback else st.columns(1)
+        _bc[0].button("💾 保存", key=f"keysave_{key_env}", type="primary", use_container_width=True,
+                      on_click=_save_key, args=(key_env,))
+        if _has_fallback:
+            _bc[1].button("取消", key=f"keycancel_{key_env}", use_container_width=True,
+                          on_click=_set_key_edit, args=(key_env, False))
+        st.caption("🔒 仅明文保存在本机 ~/.tradingagents/，不上传")
     # 模型用下拉选择（不可手填），每个 provider 一组、各自默认
     models = PROVIDER_MODELS.get(provider, [])
     ddef, qdef = PROVIDER_DEFAULT.get(provider, (models[0] if models else "", models[-1] if models else ""))

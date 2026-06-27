@@ -1238,9 +1238,9 @@ with st.sidebar:
     dk, qk = f"deep_{provider}", f"quick_{provider}"
     st.session_state.setdefault(dk, ddef if ddef in models else (models[0] if models else ""))
     st.session_state.setdefault(qk, qdef if qdef in models else (models[-1] if models else ""))
-    cmc = st.columns(2)
-    deep_model = cmc[0].selectbox("Deep 模型 · 主力", models, key=dk)
-    quick_model = cmc[1].selectbox("Quick 模型 · 快速", models, key=qk)
+    # 满宽上下排（原来两列并排太窄，模型名被截断成 "deepseek…"）
+    deep_model = st.selectbox("Deep 模型 · 主力（深度思考）", models, key=dk)
+    quick_model = st.selectbox("Quick 模型 · 快速（轻量步骤）", models, key=qk)
 
     st.markdown("### ⚙️ 参数")
     # 分析师：可点选的 pills（比 multiselect 的标签框更直观美观），默认全选

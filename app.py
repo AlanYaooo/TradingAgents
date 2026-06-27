@@ -174,13 +174,15 @@ div[data-testid="stVerticalBlockBorderWrapper"]{ background:var(--panel) !import
 hr{ border-color:var(--border-soft); }
 ::-webkit-scrollbar{ width:9px; height:9px; } ::-webkit-scrollbar-thumb{ background:var(--border); border-radius:6px; } ::-webkit-scrollbar-track{ background:transparent; }
 
-/* 分段控件(市场/导航切换)：未选中段默认用 config 的 secondaryBackgroundColor(深色硬编码)，
-   浅色主题下会变黑框 —— 用主题变量覆盖，让它随深/浅色切换 */
-[data-testid="stButtonGroup"] button[kind="segmented_control"]{
+/* 分段控件 / pills（市场/导航/分析师）：未选中段默认用 config 的深色 secondaryBackgroundColor，
+   浅色下会变黑框 —— 用主题变量覆盖（按 kind 是否以 Active 结尾区分选中态，同时覆盖 segmented 与 pills）。
+   并收紧左右内边距，让 4 个市场短标签能放进一行。 */
+[data-testid="stButtonGroup"] button:not([kind$="Active"]){
   background:var(--panel2) !important; color:var(--text) !important; border:1px solid var(--border) !important; }
-[data-testid="stButtonGroup"] button[kind="segmented_control"]:hover{ border-color:var(--brand) !important; }
-[data-testid="stButtonGroup"] button[kind="segmented_controlActive"]{
+[data-testid="stButtonGroup"] button:not([kind$="Active"]):hover{ border-color:var(--brand) !important; }
+[data-testid="stButtonGroup"] button[kind$="Active"]{
   background:rgba(124,108,255,.15) !important; color:var(--brand) !important; border:1px solid var(--brand) !important; }
+[data-testid="stButtonGroup"] button{ padding-left:10px !important; padding-right:10px !important; }
 
 /* 侧栏分区：标题间加分隔线 + 更大间距，层级更清晰 */
 section[data-testid="stSidebar"] h3{ margin-top:1.3rem !important; padding-top:.75rem; border-top:1px solid var(--border-soft); }
@@ -255,6 +257,11 @@ MARKETS = {
 NAV_MARKET = "📈 行情"
 NAV_ANALYSIS = "🔬 智能分析"
 NAV_HISTORY = "📜 历史"
+
+
+def _mkt_short(m: str) -> str:
+    # 市场分段控件只显示短名（去掉旗帜前缀，Windows 下旗帜会显示成 "CN" 占宽、4 个挤不下一行）
+    return m.split(" ", 1)[1] if " " in m else m
 PROVIDERS = {
     "Anthropic / Claude（含中转站）": ("anthropic", True),
     "OpenAI 兼容中转站": ("openai_compatible", True),
@@ -967,7 +974,7 @@ def render_quotes_table(market: str) -> None:
         if t not in tickers:
             tickers.append(t)
     if not tickers:
-        st.caption("暂无标的，去左侧搜索后「⭐ 加入自选」。")
+        st.caption("这里还没有内容，去左侧搜名称后「⭐ 加入自选」。")
         return
     qd = _quotes_cached(tuple(tickers), market)
     st.markdown('<div class="qhead"><span>名称 / 代码</span><span>最新价</span><span>涨跌幅</span></div>',
@@ -994,8 +1001,8 @@ def render_quotes_table(market: str) -> None:
 
 
 def render_market_page() -> None:
-    st.markdown('<div class="sec-title">📈 实时行情 · 选标的开始分析</div>', unsafe_allow_html=True)
-    mname = st.segmented_control("市场", list(MARKETS.keys()), default="🇨🇳 A股",
+    st.markdown('<div class="sec-title">📈 实时行情 · 点开看 K 线、做分析</div>', unsafe_allow_html=True)
+    mname = st.segmented_control("市场", list(MARKETS.keys()), default="🇨🇳 A股", format_func=_mkt_short,
                                  key="mkt_page_sel", label_visibility="collapsed")
     mname = mname or "🇨🇳 A股"
     rc = st.columns([6, 1], vertical_alignment="center")
@@ -1078,7 +1085,7 @@ def render_detail_page(focus: dict) -> None:
     with st.spinner("加载 K 线…"):
         rows = _kline_cached(ticker, period, interval)
     if not rows:
-        st.warning("暂无 K 线数据（该标的可能在 Yahoo 无对应周期行情）。")
+        st.warning("暂无 K 线数据（该股票 / 币种可能在 Yahoo 无对应周期行情）。")
     elif go is None:
         st.line_chart({"收盘价": [r["close"] for r in rows]})
     else:
@@ -1153,7 +1160,7 @@ with st.sidebar:
     st.markdown("### 🎯 分析对象")
     # 4 大类切换（A股 / 美股 / 港股 / 虚拟币）—— 替代下拉
     market_name = st.segmented_control("市场 / 资产", list(MARKETS.keys()), default="🇨🇳 A股",
-                                       key="market_sel", label_visibility="collapsed")
+                                       format_func=_mkt_short, key="market_sel", label_visibility="collapsed")
     market_name = market_name or "🇨🇳 A股"
     mkt = MARKETS[market_name]
     if st.session_state.get("_mkt") != market_name:
@@ -1187,7 +1194,7 @@ with st.sidebar:
     _wl = load_watchlist()
     with st.expander(f"⭐ 自选库 · {len(_wl)}", expanded=False):
         if not _wl:
-            st.caption("还没有自选标的。搜索或填代码后点「⭐ 加入自选」。")
+            st.caption("自选库还是空的。搜索或填代码后点「⭐ 加入自选」。")
         for _e in _wl:
             _mk = _e.get("market", market_name)
             _flag = (_mk or "").split(" ")[0]
@@ -1236,11 +1243,15 @@ with st.sidebar:
     quick_model = cmc[1].selectbox("Quick 模型 · 快速", models, key=qk)
 
     st.markdown("### ⚙️ 参数")
-    language = st.radio("输出语言", ["中文", "English"], horizontal=True)
+    # 分析师：可点选的 pills（比 multiselect 的标签框更直观美观），默认全选
+    _apill = {f"{ic} {nm.split(' / ')[0].replace('分析师', '').strip()}": nm for nm, ic, *_ in ANALYSTS}
+    _sel = st.pills("分析师团队 · 可多选", list(_apill), selection_mode="multi",
+                    default=list(_apill), key="analysts_pills")
+    analysts_sel = [_apill[lb] for lb in (_sel or [])]
     rc = st.columns(2)
     debate_rounds = rc[0].slider("多空轮数", 1, 3, 1)
     risk_rounds = rc[1].slider("风控轮数", 1, 3, 1)
-    analysts_sel = st.multiselect("分析师", [a[0] for a in ANALYSTS], default=[a[0] for a in ANALYSTS])
+    language = st.radio("输出语言", ["中文", "English"], horizontal=True)
     # 分析基准日：默认今天（用最新数据）。仅回测历史某天才需要改 -> 收进折叠项。
     with st.expander("🗓️ 分析基准日 · 默认最新", expanded=False):
         st.caption("默认用最新数据分析；仅当你想回测历史某一天时才需要在此修改。")
@@ -1310,7 +1321,7 @@ def _empty_state():
         '<div><div style="font-size:1.6rem">🛡️</div><b>风控辩论</b><div style="color:var(--muted);font-size:.82rem;margin-top:4px">激进·保守·中立三方评估</div></div>'
         '<div><div style="font-size:1.6rem">🎯</div><b>组合经理</b><div style="color:var(--muted);font-size:.82rem;margin-top:4px">最终买/卖/持有 + 仓位止损</div></div>'
         '</div></div>', unsafe_allow_html=True)
-    st.info("👈 在左侧选择市场与标的、配置 API Key，点击 **开始分析**。数据源会按市场自动路由。")
+    st.info("👈 在左侧选市场、填代码（或搜名称）、配置 API Key，点 **开始分析**。数据源会按市场自动路由。")
 
 
 def _build_ui_cfg():
@@ -1352,7 +1363,7 @@ elif do_run:
     st.session_state.pop("start_run", None)
     ui_cfg = _build_ui_cfg()
     if not ui_cfg["ticker"]:
-        st.error("请填写标的代码"); st.stop()
+        st.error("请填写股票代码"); st.stop()
 
     here = os.path.dirname(os.path.abspath(__file__))
     workdir = os.path.join(here, ".uiruns"); os.makedirs(workdir, exist_ok=True)

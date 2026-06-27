@@ -1270,7 +1270,7 @@ st.markdown(
     'stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 6"/>'
     '<polyline points="15 6 21 6 21 12"/></svg></div>'
     f'<div><div class="bn">{APP_NAME}<span class="en">TRADINGAGENTS</span></div>'
-    '<div class="bt">你的 AI 股市助手 · 看行情 · 找标的 · 多智能体帮你做决策</div></div></div>',
+    '<div class="bt">你的 AI 股市助手 · 看行情 · 多智能体帮你分析买卖</div></div></div>',
     unsafe_allow_html=True)
 
 # dev 预览：?demo=1 加载最近一次已完成的 run（须在 nav_page 控件实例化前设置 widget 状态，
